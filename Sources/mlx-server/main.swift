@@ -209,13 +209,14 @@ struct MLXServer: AsyncParsableCommand {
             if isStream {
                 // SSE streaming
                 let (sseStream, cont) = AsyncStream<String>.makeStream()
+                let filter = OutputFilter()
                 Task {
                     var hasToolCalls = false
                     var toolCallIndex = 0
                     for await generation in stream {
                         switch generation {
                         case .chunk(let rawText):
-                            let text = sanitizeOutput(rawText)
+                            let text = filter.process(rawText)
                             if !text.isEmpty {
                                 cont.yield(sseChunk(modelId: modelId, delta: text, finishReason: nil))
                             }
@@ -247,10 +248,11 @@ struct MLXServer: AsyncParsableCommand {
                 var completionTokenCount = 0
                 var collectedToolCalls: [ToolCallResponse] = []
                 var tcIndex = 0
+                let filter = OutputFilter()
                 for await generation in stream {
                     switch generation {
                     case .chunk(let rawText):
-                        fullText += sanitizeOutput(rawText)
+                        fullText += filter.process(rawText)
                         completionTokenCount += 1
                     case .toolCall(let tc):
                         let argsJson = serializeToolCallArgs(tc.function.arguments)
@@ -376,19 +378,43 @@ func jsonHeaders() -> HTTPFields {
     HTTPFields([HTTPField(name: .contentType, value: "application/json")])
 }
 
-/// Strip model-specific special tokens that leak into generation output.
-/// Handles: <|channel|>...<|message|>, <|end|>, <|start|>assistant, <think>...</think>
-func sanitizeOutput(_ text: String) -> String {
-    var result = text
-    // Strip <|channel|>...<|message|> routing prefixes (e.g. gpt-oss)
-    if let range = result.range(of: #"<\|channel\|>.*?<\|message\|>"#, options: .regularExpression) {
-        result.removeSubrange(range)
+/// Stateful output filter that strips model-specific special tokens.
+/// In streaming mode, tokens like <|channel|>, "analysis", <|message|> arrive
+/// as separate chunks, so a stateless regex can't match the full pattern.
+/// This filter tracks state to suppress content between <|channel|> and <|message|>.
+class OutputFilter {
+    private var suppressing = false  // true when inside <|channel|>...<|message|> block
+
+    /// Process a single chunk of text. Returns the cleaned text (may be empty).
+    func process(_ text: String) -> String {
+        // Check for <|...|> special tokens
+        if text.contains("<|") && text.contains("|>") {
+            // Start suppressing on <|channel|>
+            if text.contains("<|channel|>") {
+                suppressing = true
+                return ""
+            }
+            // Stop suppressing on <|message|>
+            if text.contains("<|message|>") {
+                suppressing = false
+                return ""
+            }
+            // Strip any other <|...|> tokens (e.g. <|end|>, <|start|>)
+            let stripped = text.replacingOccurrences(of: #"<\|[^|]+\|>"#, with: "", options: .regularExpression)
+            return suppressing ? "" : stripped
+        }
+
+        // While suppressing (between <|channel|> and <|message|>), drop everything
+        if suppressing { return "" }
+
+        // Strip <think>...</think> (may span chunks, but catches single-chunk case)
+        var result = text
+        result = result.replacingOccurrences(of: #"<think>[\s\S]*?</think>"#, with: "", options: .regularExpression)
+        // Also strip standalone <think> or </think> tags
+        result = result.replacingOccurrences(of: "<think>", with: "")
+        result = result.replacingOccurrences(of: "</think>", with: "")
+        return result
     }
-    // Strip remaining <|...|> special tokens
-    result = result.replacingOccurrences(of: #"<\|[^|]+\|>"#, with: "", options: .regularExpression)
-    // Strip <think>...</think> blocks (fallback if enable_thinking didn't suppress them)
-    result = result.replacingOccurrences(of: #"<think>[\s\S]*?</think>"#, with: "", options: .regularExpression)
-    return result
 }
 
 func sseHeaders() -> HTTPFields {
