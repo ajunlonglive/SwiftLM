@@ -219,9 +219,14 @@ struct MLXServer: AsyncParsableCommand {
                     for await generation in stream {
                         switch generation {
                         case .chunk(let rawText, let tokenId):
-                            let text = filter.process(rawText, tokenId: tokenId)
-                            if !text.isEmpty {
+                            let result = filter.process(rawText, tokenId: tokenId)
+                            switch result {
+                            case .content(let text):
                                 cont.yield(sseChunk(modelId: modelId, delta: text, finishReason: nil))
+                            case .reasoning(let text):
+                                cont.yield(sseChunk(modelId: modelId, delta: "", reasoningContent: text, finishReason: nil))
+                            case .skip:
+                                break
                             }
                             // Yield GPU time to WindowServer (prevents UI freeze)
                             if gpuYield > 0 { usleep(gpuYield) }
@@ -248,6 +253,7 @@ struct MLXServer: AsyncParsableCommand {
             } else {
                 // Non-streaming: collect all chunks and tool calls
                 var fullText = ""
+                var reasoningText = ""
                 var completionTokenCount = 0
                 var collectedToolCalls: [ToolCallResponse] = []
                 var tcIndex = 0
@@ -255,7 +261,12 @@ struct MLXServer: AsyncParsableCommand {
                 for await generation in stream {
                     switch generation {
                     case .chunk(let rawText, let tokenId):
-                        fullText += filter.process(rawText, tokenId: tokenId)
+                        let result = filter.process(rawText, tokenId: tokenId)
+                        switch result {
+                        case .content(let text): fullText += text
+                        case .reasoning(let text): reasoningText += text
+                        case .skip: break
+                        }
                         completionTokenCount += 1
                     case .toolCall(let tc):
                         let argsJson = serializeToolCallArgs(tc.function.arguments)
@@ -398,7 +409,8 @@ class OutputFilter {
 
     private enum Phase {
         case emitting       // Default: pass text through (also initial state for non-gpt-oss)
-        case suppressing    // Inside analysis channel content — drop everything
+        case suppressing    // Suppressing structural tokens (role names, etc.)
+        case reasoning      // Inside analysis channel — route to reasoning_content
         case channelName    // Just saw <|channel|>, next text token is the channel name
         case waitMessage    // Saw channel name, waiting for <|message|>
     }
@@ -406,26 +418,32 @@ class OutputFilter {
     private var phase: Phase = .emitting
     private var isAnalysisChannel = false
 
-    func process(_ text: String, tokenId: Int) -> String {
+    enum FilterResult {
+        case content(String)    // Final channel → goes to delta.content
+        case reasoning(String)  // Analysis channel → goes to delta.reasoning_content
+        case skip               // Special tokens / channel markers → drop
+    }
+
+    func process(_ text: String, tokenId: Int) -> FilterResult {
         // Handle special token IDs (gpt-oss structure)
         switch tokenId {
         case Self.channelToken:
             phase = .channelName
-            return ""
+            return .skip
         case Self.startToken:
             // <|start|> followed by role name — suppress the role name
             phase = .suppressing
-            return ""
+            return .skip
         case Self.endToken:
             // End of current channel content
             if isAnalysisChannel {
                 phase = .suppressing  // stay suppressed until next <|channel|>
             }
-            return ""
+            return .skip
         case Self.messageToken:
             // <|message|> opens the content for the current channel
-            phase = isAnalysisChannel ? .suppressing : .emitting
-            return ""
+            phase = isAnalysisChannel ? .reasoning : .emitting
+            return .skip
         default:
             break
         }
@@ -437,15 +455,17 @@ class OutputFilter {
             let name = text.trimmingCharacters(in: .whitespaces)
             isAnalysisChannel = (name == "analysis" || name == "commentary")
             phase = .waitMessage
-            return ""
+            return .skip
         case .waitMessage, .suppressing:
-            return ""
+            return .skip
+        case .reasoning:
+            return .reasoning(text)
         case .emitting:
             // Strip <think>...</think> tags as fallback for other models
             var result = text
             result = result.replacingOccurrences(of: "<think>", with: "")
             result = result.replacingOccurrences(of: "</think>", with: "")
-            return result
+            return result.isEmpty ? .skip : .content(result)
         }
     }
 }
@@ -458,10 +478,14 @@ func sseHeaders() -> HTTPFields {
     ])
 }
 
-func sseChunk(modelId: String, delta: String, finishReason: String?) -> String {
+func sseChunk(modelId: String, delta: String, reasoningContent: String? = nil, finishReason: String?) -> String {
     var deltaObj: [String: Any] = [:]
     if !delta.isEmpty {
         deltaObj = ["role": "assistant", "content": delta]
+    }
+    if let rc = reasoningContent, !rc.isEmpty {
+        deltaObj["role"] = "assistant"
+        deltaObj["reasoning_content"] = rc
     }
     var chunk: [String: Any] = [
         "id": "chatcmpl-\(UUID().uuidString)",
