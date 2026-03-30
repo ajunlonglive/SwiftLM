@@ -496,28 +496,28 @@ log "Test 19: /metrics Prometheus endpoint"
 
 METRICS_RESP=$(curl -sf "$URL/metrics")
 
-if echo "$METRICS_RESP" | grep -q "mlx_server_requests_total"; then
-    pass "Metrics: contains mlx_server_requests_total"
+if echo "$METRICS_RESP" | grep -q "swiftlm_requests_total"; then
+    pass "Metrics: contains swiftlm_requests_total"
 else
-    fail "Metrics: missing mlx_server_requests_total"
+    fail "Metrics: missing swiftlm_requests_total"
 fi
 
-if echo "$METRICS_RESP" | grep -q "mlx_server_memory_active_bytes"; then
-    pass "Metrics: contains mlx_server_memory_active_bytes"
+if echo "$METRICS_RESP" | grep -q "swiftlm_memory_active_bytes"; then
+    pass "Metrics: contains swiftlm_memory_active_bytes"
 else
-    fail "Metrics: missing mlx_server_memory_active_bytes"
+    fail "Metrics: missing swiftlm_memory_active_bytes"
 fi
 
-if echo "$METRICS_RESP" | grep -q "mlx_server_tokens_per_second"; then
-    pass "Metrics: contains mlx_server_tokens_per_second"
+if echo "$METRICS_RESP" | grep -q "swiftlm_tokens_per_second"; then
+    pass "Metrics: contains swiftlm_tokens_per_second"
 else
-    fail "Metrics: missing mlx_server_tokens_per_second"
+    fail "Metrics: missing swiftlm_tokens_per_second"
 fi
 
-if echo "$METRICS_RESP" | grep -q "mlx_server_uptime_seconds"; then
-    pass "Metrics: contains mlx_server_uptime_seconds"
+if echo "$METRICS_RESP" | grep -q "swiftlm_uptime_seconds"; then
+    pass "Metrics: contains swiftlm_uptime_seconds"
 else
-    fail "Metrics: missing mlx_server_uptime_seconds"
+    fail "Metrics: missing swiftlm_uptime_seconds"
 fi
 
 # Verify Prometheus format (TYPE and HELP comments)
@@ -895,7 +895,7 @@ log "Test 29: Metrics counter accumulation"
 
 # Get baseline token count before test requests
 METRICS_BEFORE=$(curl -sf "$URL/metrics")
-TOKENS_BEFORE=$(echo "$METRICS_BEFORE" | grep "mlx_server_tokens_generated_total" | grep -v "^#" | awk '{print $2}' || echo 0)
+TOKENS_BEFORE=$(echo "$METRICS_BEFORE" | grep "swiftlm_tokens_generated_total" | grep -v "^#" | awk '{print $2}' || echo 0)
 
 # Make a request to generate tokens
 curl -sf -X POST "$URL/v1/chat/completions" \
@@ -903,7 +903,7 @@ curl -sf -X POST "$URL/v1/chat/completions" \
     -d "{\"model\":\"$MODEL\",\"max_tokens\":20,\"messages\":[{\"role\":\"user\",\"content\":\"Count to five.\"}]}" > /dev/null
 
 METRICS_AFTER=$(curl -sf "$URL/metrics")
-TOKENS_AFTER=$(echo "$METRICS_AFTER" | grep "mlx_server_tokens_generated_total" | grep -v "^#" | awk '{print $2}' || echo 0)
+TOKENS_AFTER=$(echo "$METRICS_AFTER" | grep "swiftlm_tokens_generated_total" | grep -v "^#" | awk '{print $2}' || echo 0)
 
 if [ "${TOKENS_AFTER:-0}" -gt "${TOKENS_BEFORE:-0}" ] 2>/dev/null; then
     pass "Metrics counter: tokens_generated increased ($TOKENS_BEFORE → $TOKENS_AFTER)"
