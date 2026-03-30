@@ -255,29 +255,28 @@ struct MLXServer: AsyncParsableCommand {
                 print("[mlx-server] \(plan.strategy.emoji) Memory strategy: FULL GPU (\(String(format: "%.1f", plan.weightMemoryGB))GB model, \(String(format: "%.1f", system.availableRAMGB))GB available)")
             case .swapAssisted:
                 if self.streamExperts {
-                    // SSD Streaming: bypass Metal's capped working set and use physical RAM budget
-                    // (85% of total RAM minus 4GB OS reservation)
+                    // SSD Streaming: expert weights are mmap'd from SSD via the OS page cache.
+                    // No swap involved — the page cache evicts stale expert pages cleanly.
                     let physicalBudget = Int(Double(system.totalRAMBytes) * 0.85) - (4 * 1024 * 1024 * 1024)
                     Memory.cacheLimit = physicalBudget
                     Memory.memoryLimit = 200 * 1024 * 1024 * 1024 // 200GB sentinel to bypass MLX eval_impl spin loop
-                    print("[mlx-server] \(plan.strategy.emoji) Memory strategy: SWAP-ASSISTED + SSD Streaming. Cache limit: \(physicalBudget / (1024*1024*1024))GB (physical RAM budget).")
+                    print("[mlx-server] 💾 Memory strategy: SSD STREAMING (page-cache managed, \(physicalBudget / (1024*1024*1024))GB RAM budget, no swap)")
                 } else {
                     Memory.cacheLimit = plan.recommendedCacheLimit
                     print("[mlx-server] \(plan.strategy.emoji) Memory strategy: SWAP-ASSISTED (\(String(format: "%.1f", plan.overcommitRatio))× overcommit, cache limited to \(plan.recommendedCacheLimit / (1024*1024))MB)")
+                    for w in plan.warnings { print("[mlx-server]    \(w)") }
                 }
-                for w in plan.warnings { print("[mlx-server]    \(w)") }
             case .layerPartitioned:
                 if self.streamExperts {
-                    // SSD Streaming: bypass Metal's capped working set and use physical RAM budget
                     let physicalBudget = Int(Double(system.totalRAMBytes) * 0.85) - (4 * 1024 * 1024 * 1024)
                     Memory.cacheLimit = physicalBudget
                     Memory.memoryLimit = 200 * 1024 * 1024 * 1024 // 200GB sentinel to bypass MLX eval_impl spin loop
-                    print("[mlx-server] \(plan.strategy.emoji) Memory strategy: LAYER PARTITIONED + SSD Streaming. Cache limit: \(physicalBudget / (1024*1024*1024))GB (physical RAM budget).")
+                    print("[mlx-server] 💾 Memory strategy: SSD STREAMING (page-cache managed, \(physicalBudget / (1024*1024*1024))GB RAM budget, no swap)")
                 } else {
                     Memory.cacheLimit = plan.recommendedCacheLimit
                     print("[mlx-server] \(plan.strategy.emoji) Memory strategy: LAYER PARTITIONED (\(plan.recommendedGPULayers)/\(plan.totalLayers) GPU layers, cache limited to \(plan.recommendedCacheLimit / (1024*1024))MB)")
+                    for w in plan.warnings { print("[mlx-server]    \(w)") }
                 }
-                for w in plan.warnings { print("[mlx-server]    \(w)") }
             case .tooLarge:
                 Memory.cacheLimit = plan.recommendedCacheLimit
                 print("[mlx-server] \(plan.strategy.emoji) WARNING: Model is \(String(format: "%.1f", plan.overcommitRatio))× system RAM. Loading will be extremely slow.")
