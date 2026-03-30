@@ -306,6 +306,24 @@ public enum MLXFast {
         mlx_fast_prefault(x.ctx)
     }
 
+    /// Overwrites an already-evaluated MLX array's buffer by pread()-ing
+    /// the given expert's bytes directly from a safetensors file.
+    /// Gives full NVMe sequential read throughput (~5 GB/s).
+    /// The array MUST already be evaluated before calling this.
+    @discardableResult
+    public static func preadInto(
+        _ dst: MLXArray,
+        safetensorsPath: String,
+        tensorName: String,
+        expertIndex: UInt32
+    ) -> Int32 {
+        safetensorsPath.withCString { pathPtr in
+            tensorName.withCString { namePtr in
+                mlx_fast_pread_into(dst.ctx, pathPtr, namePtr, expertIndex)
+            }
+        }
+    }
+
 }
 
 /// Optimized implementation of `NN.RoPE`.

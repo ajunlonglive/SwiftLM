@@ -217,6 +217,18 @@ int mlx_fast_turbo_encode(
 
 int mlx_fast_prefault(mlx_array x);
 
+// pread() directly into the already-evaluated MLX array's unified memory buffer.
+// This gives full NVMe sequential throughput without OS page-fault overhead.
+// The array MUST already be evaluated (concrete pointer exists).
+// safetensors_path: full path to .safetensors file
+// tensor_name: e.g. "model.layers.0.mlp.experts.gate_proj.weight"
+// expert_index: 0-based index of the expert to read
+int mlx_fast_pread_into(
+    mlx_array dst,
+    const char* safetensors_path,
+    const char* tensor_name,
+    uint32_t expert_index);
+
 /**@}*/
 
 #ifdef __cplusplus

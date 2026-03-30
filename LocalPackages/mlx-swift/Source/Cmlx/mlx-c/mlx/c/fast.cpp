@@ -814,3 +814,84 @@ extern "C" int mlx_fast_prefault(
     return 0;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// mlx_fast_pread_into
+// Overwrite the data of an already-evaluated MLX array by pread()-ing
+// the matching expert slab directly from a .safetensors file.
+// This gives full NVMe sequential throughput (~5 GB/s) while preserving all
+// MLX tensor metadata (shape, strides, dtype) on the dst array.
+// ─────────────────────────────────────────────────────────────────────────────
+struct STPReadEntry {
+    int fd = -1;
+    size_t data_start = 0;
+    size_t bytes_per_expert = 0;
+};
+static std::mutex st_pread_cache_mutex;
+static std::unordered_map<std::string, STPReadEntry> st_pread_cache;
+
+extern "C" int mlx_fast_pread_into(
+    mlx_array dst,
+    const char* safetensors_path,
+    const char* tensor_name,
+    uint32_t expert_index) {
+    try {
+        std::string path(safetensors_path);
+        std::string tname(tensor_name);
+        std::string key = path + "|" + tname;
+
+        size_t data_start = 0;
+        size_t bytes_per_expert = 0;
+        int fd = -1;
+
+        {
+            std::lock_guard<std::mutex> lock(st_pread_cache_mutex);
+            auto it = st_pread_cache.find(key);
+            if (it != st_pread_cache.end()) {
+                fd = it->second.fd;
+                data_start = it->second.data_start;
+                bytes_per_expert = it->second.bytes_per_expert;
+            } else {
+                int new_fd = open(path.c_str(), O_RDONLY);
+                if (new_fd < 0) throw std::runtime_error("[pread_into] Cannot open: " + path);
+
+                uint64_t hlen = 0;
+                if (pread(new_fd, &hlen, 8, 0) != 8) { close(new_fd); throw std::runtime_error("[pread_into] Cannot read header length"); }
+                std::vector<char> hbuf(hlen);
+                if ((size_t)pread(new_fd, hbuf.data(), hlen, 8) != hlen) { close(new_fd); throw std::runtime_error("[pread_into] Cannot read header JSON"); }
+                auto j = nlohmann::json::parse(hbuf.data(), hbuf.data() + hlen);
+                size_t data_section_start = 8 + hlen;
+
+                for (auto& item : j.items()) {
+                    if (item.key() == tname) {
+                        auto& v = item.value();
+                        auto shape = v.at("shape").get<std::vector<size_t>>();
+                        auto offsets = v.at("data_offsets").get<std::vector<size_t>>();
+                        size_t E = shape[0];
+                        bytes_per_expert = (offsets[1] - offsets[0]) / E;
+                        data_start = data_section_start + offsets[0];
+                        break;
+                    }
+                }
+                if (bytes_per_expert == 0) { close(new_fd); throw std::runtime_error("[pread_into] Tensor not found: " + tname); }
+
+                STPReadEntry entry{ new_fd, data_start, bytes_per_expert };
+                st_pread_cache[key] = entry;
+                fd = new_fd;
+            }
+        }
+
+        auto& arr = mlx_array_get_(dst);
+        void* buf = const_cast<void*>(static_cast<const void*>(arr.data<uint8_t>()));
+        if (!buf) throw std::runtime_error("[pread_into] dst has no data pointer — call eval() first");
+        size_t nbytes = arr.nbytes();
+        off_t file_offset = static_cast<off_t>(data_start + (size_t)expert_index * bytes_per_expert);
+        ssize_t result = pread(fd, buf, nbytes, file_offset);
+        if (result < 0 || (size_t)result != nbytes)
+            throw std::runtime_error("[pread_into] pread failed: got " + std::to_string(result) + " of " + std::to_string(nbytes));
+
+    } catch (std::exception& e) {
+        mlx_error(e.what());
+        return 1;
+    }
+    return 0;
+}
