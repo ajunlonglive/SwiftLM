@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "SwiftLM",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v14), .iOS(.v17)],
     dependencies: [
         // Local Apple MLX Swift fork for C++ extensions
         .package(path: "./LocalPackages/mlx-swift"),
@@ -17,6 +17,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
     ],
     targets: [
+        // ── CLI HTTP server (macOS only) ──────────────────────────────
         .executableTarget(
             name: "SwiftLM",
             dependencies: [
@@ -29,6 +30,19 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/SwiftLM",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency")
+            ]
+        ),
+        // ── Shared inference library for SwiftLM Chat (iOS + macOS) ──
+        .target(
+            name: "MLXInferenceCore",
+            dependencies: [
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXLLM", package: "mlx-swift-lm"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+            ],
+            path: "Sources/MLXInferenceCore",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency")
             ]
