@@ -41,3 +41,36 @@ Our hybrid approach guarantees:
 3. **Targeted regularization** by isolating QJL to the K-Cache only.
 
 The result is a highly efficient unified KV Cache running at an average of **~3.6 bits/dim (~3.5x compression vs fp16)**, recovering the performance characteristics of V2 with the perplexity retention of V3.
+
+## Implementation Status (March 2026)
+
+### Hot-Window Eviction Design
+
+The production implementation uses a **hot-window eviction** strategy rather than always-compress:
+
+- **fp16 hot window (last 256 tokens):** Always kept at full precision. Short prompts (<256 tokens) receive zero compression — full fp16 quality preserved.
+- **Cold history (older than 256 tokens):** Compressed to 3-bit PolarQuant in `step=256` chunks when enough cold tokens accumulate.
+- **Attention path:** SDPA sees `[decoded_prior_history | fp16_hot_window]` — the two regions are disjoint by construction, eliminating any duplication risk.
+
+This design was chosen over the reference's always-compress approach (`cache_v3.py`) for two reasons:
+1. The reference uses an incremental `_key_centroids_cache` shadow buffer to amortize decode cost — this requires keeping a full fp16 dequantized copy in addition to the packed storage (more RAM total). Our approach evicts the fp16 cold tokens and decodes on demand.
+2. Short context tool-use calls (100–400 tokens) need no compression and should not pay the decode latency penalty.
+
+### Telemetry
+
+Compression stats are aggregated into the 10-second SSD Stream log via C atomics:
+```
+[⚡️ SSD Stream] 8977 MB/s | 21698 chunks | avg 0.167 ms/chunk | 🗜 TurboKV 4.3x (5MB saved)
+```
+The `🗜 TurboKV` suffix only appears when compression was active in that 10s window.
+
+### Commit References
+
+| Repository | Branch | Commit | Description |
+|---|---|---|---|
+| `mlx-swift-lm` | `main` | `b7307a4` | Hot-window eviction design, AttentionUtils cleanup |
+| `mlx-swift-lm` | `main` | `2d885b8` | Fix context duplication in SDPA path |
+| `mlx-swift-lm` | `main` | `71678dd` | Fix origBytes telemetry calculation |
+| `mlx-swift-lm` | `main` | `c336189` | Remove double-counting record() call |
+| `mlx-swift` | `feature/api-parity-roadmap` | `3df7430` | 10s log: ratio + MB saved display |
+| `mlx-swift` | `feature/api-parity-roadmap` | `dc6af72` | C atomic aggregator + 10s log hook |
