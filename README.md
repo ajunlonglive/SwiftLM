@@ -49,16 +49,42 @@ Reference implementations: [`turboquant-mlx`](https://github.com/sharpner/turboq
 
 ## 💻 Tested Hardware & Benchmarks
 
-To reliably run massive 122B parameter MoE models over SSD streaming, `SwiftLM` was designed and benchmarked natively on the following hardware:
+SwiftLM is designed to leverage Apple Silicon Unified Memory limits to their absolute maximum. All first-party benchmarks are generated on an **Apple M5 Pro (64 GB Unified Memory)**.
 
-- **Machine**: MacBook Pro, Apple M5 Pro
-- **Memory**: 64 GB Unified Memory
-- **Model**: Qwen3.5-122B-A10B-4bit
-- **SSD**: Internal Apple NVMe (Zero-Copy Streaming)
+Since we have limited access to the full spectrum of Apple hardware, **we welcome Pull Requests with benchmark results** from other devices (especially base M1/M2/M3 chips and Mac Studios). 
+
+To run the extreme context benchmark suite on your device, execute:
+```bash
+bash tests/run_extreme_context.sh <model-id>
+```
+
+### Extreme Context Performance (100K Tokens)
+Tested on M5 Pro (64GB) handling a monolithic **100,000 token** system prompt with **TurboKV Acceleration** enabled.
+
+| Model | Configuration | Time To First Token (TTFT) | Peak GPU Memory (w/ TurboKV) |
+|---|---|---|---|
+| `gemma-4-e4b-it-8bit` | Dense (4B) | 60.92s | 11.83 GB |
+| `gemma-4-26b-a4b-it-4bit` | MoE (26B) | 66.99s | 16.86 GB |
+| `gemma-4-31b-it-4bit` | MoE (31B) | 533.37s | 29.23 GB |
+
+### Throughput & Inference Memory Profile
+Tested by rendering exactly 20 tokens under standard conversational evaluation (`--prefill-size 512`) to capture precise Token Generation (TPS) and Apple Metal memory footprint limits:
+
+| Model | Time To First Token (s) | Generation Speed (tok/s) | Peak GPU Memory (GB) |
+|---|---|---|---|
+| `gemma-4-e2b-it-4bit` | 0.08s | 116.27 tok/s | 1.37 GB |
+| `gemma-4-e4b-it-8bit` | 0.33s | 48.21 tok/s | 7.64 GB |
+| `gemma-4-26b-a4b-it-4bit` | 0.14s | 85.49 tok/s | 13.46 GB |
+| `gemma-4-31b-it-4bit` | 0.55s | 14.82 tok/s | 16.83 GB |
+
+To run the automated suite on your machine for these models, execute:
+```bash
+python3 tests/run_4models_benchmark.py
+```
+
+> **🧠 How it works:** SwiftLM implements **Chunked Prefill** (controlled via `--prefill-size`, defaulting to 512). This is functionally equivalent to `llama.cpp`'s `--batch-size` parameter and mirrors the [`mlx-lm` Python library](https://github.com/ml-explore/mlx/tree/main/mlx_lm)'s reference implementation approach to preventing $O(N^2)$ Unified Memory over-allocation during massive sequence parsing.
 
 > **⚠️ Quantization Disclaimer**: While heavier quantization shrinks the required memory footprint, **4-bit quantization** remains the strict production standard for MoE models. Our metrics indicated that aggressive 2-bit quantization heavily destabilizes JSON grammars—routinely producing broken keys like `\name\` instead of `"name"`—which systematically breaks OpenAI-compatible tool calling.
-
----
 
 ---
 
@@ -173,6 +199,7 @@ curl http://localhost:5413/v1/chat/completions \
 | `--port` | `5413` | Port to listen on |
 | `--host` | `127.0.0.1` | Host to bind |
 | `--max-tokens` | `2048` | Max tokens limit per generation |
+| `--prefill-size`| `512`  | Prompt prefill chunk size (micro-batching for long contexts) |
 | `--gpu-layers` | `model_default`| Restrict the amount of layers allocated to GPU hardware |
 | `--stream-experts` | `false` | Enable experimental SSD streaming for MoE model expert matrices |
 
@@ -187,6 +214,7 @@ curl http://localhost:5413/v1/chat/completions \
 
 Built entirely on the hard work of the Apple MLX community.
 - [mlx-swift](https://github.com/ml-explore/mlx-swift) — Apple MLX framework for Swift
+- [mlx-lm](https://github.com/ml-explore/mlx/tree/main/mlx_lm) — Python reference implementation for MLX Language Models (inspiration for prompt chunking architecture)
 - [Hummingbird](https://github.com/hummingbird-project/hummingbird) — Event-driven Swift HTTP server
 - [flash-moe](https://github.com/danveloper/flash-moe) — Reference for SSD Expert Streaming
 
