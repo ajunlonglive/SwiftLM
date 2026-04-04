@@ -961,7 +961,15 @@ func handleChatCompletion(
         if let cachedCount = await promptCache.restore(newTokens: promptTokens, into: cache) {
             // Cache hit: KV state is pre-populated up to cachedCount tokens.
             // Only compute the remaining (new) tokens.
-            let remainingTokens = lmInput.text.tokens[cachedCount...]
+            var startIndex = cachedCount
+            if startIndex >= lmInput.text.tokens.count {
+                // Full match: all tokens are cached. We still need to feed at least
+                // the last token so the model can produce next-token logits.
+                startIndex = lmInput.text.tokens.count - 1
+                // Trim the KV cache back by 1 to avoid double-counting the replayed token.
+                for layer in cache { layer.trim(1) }
+            }
+            let remainingTokens = lmInput.text.tokens[startIndex...]
             let trimmedInput = LMInput(tokens: remainingTokens)
             return try MLXLMCommon.generate(
                 input: trimmedInput, cache: cache, parameters: params, context: context
