@@ -210,6 +210,17 @@ curl http://localhost:5413/v1/chat/completions \
 - Xcode Command Line Tools
 - Metal Toolchain (`xcodebuild -downloadComponent MetalToolchain`)
 
+## 📖 Development Journal & The "Aha!" Moment
+
+The stabilization of the Gemma 4 inference engine on Apple Silicon is fully chronicled in our [Development Journal](journal.md.resolved).
+
+**The "2+2=4" Aha Moment**: During development, we encountered a severe "silent failure" where the model would successfully load and evaluate all 32 layers at high speed, but generate nothing but infinite whitespace. The model logits showed the correct *shape* but the wrong *magnitudes*. 
+
+The breakthrough arrived when we realized the **embedding scale** was missing. The Gemma architecture requires scaling embedding outputs by `sqrt(hidden_size)`. For a hidden size of 2816, missing this meant every activation in the network was ~53x too small! By adding one single math operation:
+`h = h * MLXArray(Float(config.hiddenSize).squareRoot())`
+
+The model instantly woke up from "whispering" whitespace and successfully responded to `"What is 2+2?"` with a perfect `"2 + 2 equals 4."` — proving that the entire massive structural pipeline from Swift to Metal was working.
+
 ## 📄 Dependencies & License
 
 Built entirely on the hard work of the Apple MLX community.
