@@ -11,16 +11,17 @@ echo ""
 echo "Select Action:"
 echo "1) Test 1: Automated Context & Memory Profile (TPS & RAM matrix)"
 echo "2) Test 2: Prompt Cache & Sliding Window Regression Test"
-echo "3) Model Maintain List and Delete"
-echo "4) Quit"
-read -p "Option (1-4): " suite_opt
+echo "3) Test 3: HomeSec Benchmark (LLM Only)"
+echo "4) Model Maintain List and Delete"
+echo "5) Quit"
+read -p "Option (1-5): " suite_opt
 
-if [ "$suite_opt" == "4" ] || [ -z "$suite_opt" ]; then
+if [ "$suite_opt" == "5" ] || [ -z "$suite_opt" ]; then
     echo "Exiting."
     exit 0
 fi
 
-if [ "$suite_opt" == "3" ]; then
+if [ "$suite_opt" == "4" ]; then
     echo ""
     echo "=> Downloaded Models Maintenance"
     CACHE_DIR="$HOME/.cache/huggingface/hub"
@@ -159,6 +160,35 @@ if [ "$suite_opt" == "2" ]; then
     echo "✅ Test Passed! The server successfully interleaved long context (sliding window)"
     echo "with short context, without crashing or throwing Out-of-Memory / SIGTRAP errors."
     echo "This proves the Prompt Cache bounds are stable."
+    
+    echo ""
+    echo "Cleaning up..."
+    killall SwiftLM
+    wait $SERVER_PID 2>/dev/null
+    exit 0
+fi
+
+if [ "$suite_opt" == "3" ]; then
+    echo ""
+    echo "=> Starting HomeSec Benchmark (LLM Only) on $FULL_MODEL"
+    
+    echo "Starting Server in background..."
+    killall SwiftLM 2>/dev/null
+    mkdir -p tmp
+    $BIN --model "$FULL_MODEL" --port 5431 --turbo-kv --stream-experts --ctx-size 8192 > ./tmp/homesec_server.log 2>&1 &
+    SERVER_PID=$!
+    
+    echo "Waiting for server to be ready on port 5431 (this may take a minute if downloading)..."
+    for i in {1..300}; do
+        if curl -s http://127.0.0.1:5431/health > /dev/null; then break; fi
+        sleep 1
+    done
+    
+    echo ""
+    echo "Server is up! Executing DeepCamera HomeSec Benchmark..."
+    
+    # Run the benchmark against the LLM gateway. Not specifying --vlm disables VLM tests.
+    node ../DeepCamera/skills/analysis/home-security-benchmark/scripts/run-benchmark.cjs --gateway http://127.0.0.1:5431/v1
     
     echo ""
     echo "Cleaning up..."
