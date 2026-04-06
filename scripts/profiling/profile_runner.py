@@ -111,12 +111,32 @@ def extract_os_ram(log_path):
     except: pass
     return "N/A"
 
+def download_model(repo_id, models_dir):
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError:
+        print("Error: huggingface_hub is not installed.")
+        print("Please install it via: pip install huggingface_hub")
+        sys.exit(1)
+        
+    if "/" not in repo_id:
+        repo_id = f"mlx-community/{repo_id}"
+        
+    local_path = os.path.abspath(os.path.join(models_dir, repo_id))
+    print(f"Downloading/verifying model '{repo_id}' to '{local_path}'...\n")
+    snapshot_download(repo_id=repo_id, local_dir=local_path)
+    return local_path
+
 def main():
     parser = argparse.ArgumentParser(description="Aegis-AI Physical Model Profiler")
     parser.add_argument("--model", required=True, help="Model ID (e.g. gemma-4-26b-a4b-it-4bit)")
     parser.add_argument("--out", default="./profiling_results.md", help="Output markdown file path")
     parser.add_argument("--contexts", default="512", help="Comma-separated list of context lengths to test (e.g. 512,40000,100000)")
+    parser.add_argument("--models-dir", default="./models", help="Local directory to store downloaded models")
     args = parser.parse_args()
+    
+    # Ensure model is downloaded
+    model_path = download_model(args.model, args.models_dir)
     
     context_sizes = [int(x.strip()) for x in args.contexts.split(",") if x.strip()]
     results = []
@@ -133,7 +153,6 @@ def main():
         print(f"--- Profiling {args.model} [{config['name']}] ---")
         print(f"==============================================")
         
-        model_path = f"/Users/simba/.aegis-ai/models/mlx_models/mlx-community/{args.model}"
         log_path = "./tmp/profile_server.log"
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
         cmd = [SWIFTLM_PATH, "--model", model_path] + config["flags"]
