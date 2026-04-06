@@ -7,6 +7,7 @@ import json
 import re
 
 MODELS = [
+    "gemma-4-26b-a4b-it-8bit",
     "gemma-4-e4b-it-8bit",
     "gemma-4-26b-a4b-it-4bit",
     "gemma-4-31b-it-8bit"

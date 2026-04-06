@@ -119,11 +119,8 @@ jobs:
           - [macOS Apple Silicon (arm64)](https://github.com/SharpAI/SwiftLM/releases/download/${{ steps.tag.outputs.name }}/SwiftLM-${{ steps.tag.outputs.name }}-macos-arm64.tar.gz)
 
           ### Quick Start
-          ```bash
-          tar -xzf SwiftLM-${{ steps.tag.outputs.name }}-macos-arm64.tar.gz
-          # mlx.metallib is included — run from the extracted directory
-          ./SwiftLM --model mlx-community/Qwen2.5-3B-Instruct-4bit --port 5413
-          ```
+          
+          Please refer to the [Getting Started](https://github.com/SharpAI/SwiftLM#getting-started) section in the README for full installation and usage instructions.
 
           > **Note:** `mlx.metallib` is bundled in this archive. Keep it in the same directory as the `SwiftLM` binary — Metal GPU compute will fail if it is missing.
           RELEASE_EOF

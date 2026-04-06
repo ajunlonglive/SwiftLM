@@ -20,8 +20,9 @@ if [ "$suite_opt" == "3" ] || [ -z "$suite_opt" ]; then
 fi
 
 echo ""
-PS3="Select a model to use (1-7): "
+PS3="Select a model to use (1-8): "
 options=(
+    "gemma-4-26b-a4b-it-8bit"
     "gemma-4-26b-a4b-it-4bit"
     "gemma-4-2b-a4b-it-4bit"
     "Qwen3.5-7B-Instruct-4bit"

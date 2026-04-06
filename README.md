@@ -45,12 +45,11 @@ This will:
 Then start the server (models download automatically if not cached):
 ```bash
 .build/release/SwiftLM \
-  --model mlx-community/Qwen3.5-122B-A10B-4bit \
-  --stream-experts \
+  --model mlx-community/gemma-4-26b-a4b-it-4bit \
   --port 5413
 ```
 
-*(Add `--stream-experts` when running oversized MoE models like Qwen3.5 122B to bypass macOS virtual memory swapping and stream expert layers directly from NVMe.)*
+*(Add `--stream-experts` when running oversized MoE models to bypass macOS virtual memory swapping and stream expert layers directly from NVMe SSD.)*
 
 ## 📊 Performance: Gemma 4-26B on Apple Silicon
 
@@ -206,7 +205,7 @@ Drop-in compatible with standard OpenAI HTTP consumers:
 curl http://localhost:5413/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "Qwen3.5-122B-A10B-4bit",
+    "model": "gemma-4-26b-a4b-it-4bit",
     "stream": true,
     "messages": [
       {"role": "system", "content": "You are Aegis-AI, a local home security agent. Output strictly in JSON format."},
