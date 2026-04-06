@@ -9,7 +9,7 @@ No Python runtime, no Global Interpreter Lock (GIL), no unnecessary memory copie
 </p>
 <br>
 <p align="center">
-  <img src="docs/demo.gif" width="320" alt="SwiftLM Chat iOS demo" />
+  <img src="docs/demo.gif" width="320" alt="SwiftBuddy iOS demo" />
 </p>
 
 ---
@@ -87,7 +87,7 @@ Benchmark results for `gemma-4-26b-a4b-it-4bit` (26B MoE, 4-bit) on M5 Pro 64 GB
 
 ---
 
-## 📱 SwiftLM Chat — iOS App
+## 📱 SwiftBuddy — iOS App
 
 A native iPhone & iPad companion app that downloads MLX models directly from HuggingFace and runs inference on-device via MLX Swift.
 
@@ -104,13 +104,13 @@ A native iPhone & iPad companion app that downloads MLX models directly from Hug
 ### Build & Run (iOS)
 
 ```bash
-cd SwiftLMChat
-python3 generate_xcodeproj.py       # Generates SwiftLMChat.xcodeproj
-open SwiftLMChat.xcodeproj
+cd SwiftBuddy
+python3 generate_xcodeproj.py       # Generates SwiftBuddy.xcodeproj
+open SwiftBuddy.xcodeproj
 ```
 
 Then in Xcode:
-1. Select the **SwiftLMChat** target → **Signing & Capabilities**
+1. Select the **SwiftBuddy** target → **Signing & Capabilities**
 2. Set your **Team** (your Apple Developer account)
 3. Select your iPhone as the run destination
 4. ⌘R to build and run
