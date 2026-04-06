@@ -61,7 +61,7 @@ jobs:
           echo "Generated changelog with $(echo "$CHANGELOG" | wc -l | tr -d ' ') entries"
 
       - name: Build (Release)
-        run: swift build -c release
+        run: ./build.sh
 
       - name: Verify binary
         run: |
@@ -69,38 +69,11 @@ jobs:
           file .build/release/SwiftLM
           .build/release/SwiftLM --help || true
 
-      - name: Compile default.metallib from source
-        run: |
-          # The .metal shader sources are committed to git but the binary
-          # output (default.metallib) is gitignored. Compile fresh from the
-          # tracked sources so the metallib is version-matched to the Swift
-          # binary by construction.
-          KERNELS="LocalPackages/mlx-swift/Source/Cmlx/mlx/mlx/backend/metal/kernels"
-          MLX_ROOT="LocalPackages/mlx-swift/Source/Cmlx/mlx"
-
-          echo "Compiling $(find "$KERNELS" -name '*.metal' | wc -l | tr -d ' ') Metal shaders..."
-          mkdir -p /tmp/mlx_air
-
-          find "$KERNELS" -name "*.metal" | while read -r f; do
-            name=$(basename "$f" .metal)
-            xcrun -sdk macosx metal \
-              -I "$KERNELS" \
-              -I "$MLX_ROOT" \
-              -c "$f" \
-              -o "/tmp/mlx_air/${name}.air" 2>&1 || echo "WARN: failed to compile $f"
-          done
-
-          AIR_COUNT=$(ls /tmp/mlx_air/*.air 2>/dev/null | wc -l | tr -d ' ')
-          echo "Linking $AIR_COUNT .air files into default.metallib..."
-          xcrun -sdk macosx metallib /tmp/mlx_air/*.air -o default.metallib
-          file default.metallib
-          ls -lh default.metallib
-
       - name: Package binary
         run: |
           mkdir -p release
           cp .build/release/SwiftLM release/
-          cp default.metallib release/
+          cp .build/arm64-apple-macosx/release/mlx.metallib release/
           cp LICENSE README.md release/
           cd release
           # Verify the tarball will be self-contained before archiving
@@ -140,11 +113,11 @@ jobs:
           ### Quick Start
           ```bash
           tar -xzf SwiftLM-${{ steps.tag.outputs.name }}-macos-arm64.tar.gz
-          # default.metallib is included — run from the extracted directory
+          # mlx.metallib is included — run from the extracted directory
           ./SwiftLM --model mlx-community/Qwen2.5-3B-Instruct-4bit --port 5413
           ```
 
-          > **Note:** `default.metallib` is bundled in this archive. Keep it in the same directory as the `SwiftLM` binary — Metal GPU compute will fail if it is missing.
+          > **Note:** `mlx.metallib` is bundled in this archive. Keep it in the same directory as the `SwiftLM` binary — Metal GPU compute will fail if it is missing.
           RELEASE_EOF
 
       - name: Create release
