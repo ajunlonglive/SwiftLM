@@ -41,6 +41,9 @@ final class Tier6AdvancedTests: XCTestCase {
     }
     
     func testFeature32_AAAKCompressionEngine() {
+        XCTAssertTrue(AAAKCompressionEngine.isExperimental, "AAAK must be flagged as experimental upstream")
+        XCTAssertEqual(AAAKCompressionEngine.recommendedMode, "RAW", "RAW must be recommended natively")
+        
         let rawParagraph = "The user is working on the Memory Palace and they was specifically using the AAAK text protocol to make it compress sentences."
         let compressed = AAAKCompressionEngine.compress(rawParagraph)
         

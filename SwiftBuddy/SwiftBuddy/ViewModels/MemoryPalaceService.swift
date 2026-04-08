@@ -195,6 +195,19 @@ final class MemoryPalaceService {
         return (wings: wCount, rooms: rCount, memories: mCount)
     }
     
+    // MARK: - Native Fact Checker
+    
+    private func detectContradiction(existingObject: String, newObject: String) -> Bool {
+        // NLEmbedding-based semantic contradiction detection mechanism natively bypassing fact_checker.py limits
+        guard let e1 = generateEmbedding(for: existingObject),
+              let e2 = generateEmbedding(for: newObject) else { return false }
+        
+        let similarity = cosineSimilarity(a: e1, b: e2)
+        // If similarity is extremely low (< 0.2) but they share the exact same subject+predicate mapping,
+        // it triggers the contradiction detector.
+        return similarity < 0.2
+    }
+    
     // MARK: - Tier 5: Temporal Knowledge Graph
     
     @discardableResult
@@ -205,8 +218,14 @@ final class MemoryPalaceService {
         let fetchDesc = FetchDescriptor<KnowledgeGraphTriple>(predicate: #Predicate { $0.id == targetId })
         
         if let existing = try context.fetch(fetchDesc).first {
-            // Temporal Invalidation: overwrite older beliefs
-            existing.object = object
+            // Check for direct contradiction before quietly overwriting.
+            if detectContradiction(existingObject: existing.object, newObject: object) {
+                // Evolve the triple via Contradiction tracking (temporal shift instead of generic overwrite)
+                existing.object = "\(object) [Contradicted prior belief: \(existing.object)]"
+            } else {
+                // Standard Temporal Invalidation
+                existing.object = object
+            }
             existing.dateObserved = Date()
         } else {
             let triple = KnowledgeGraphTriple(subject: subject, predicate: predicate, object: object)
