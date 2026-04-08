@@ -241,6 +241,7 @@ struct InspectorView: View {
                     .padding()
                     .background(Color(nsColor: .controlBackgroundColor))
                     .cornerRadius(8)
+                    .fixedSize(horizontal: false, vertical: true)
                 } header: {
                     Text("DISCOVER PERSONAS").font(.caption).foregroundColor(.secondary)
                 }
