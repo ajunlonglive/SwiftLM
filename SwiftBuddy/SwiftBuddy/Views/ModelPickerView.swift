@@ -118,6 +118,19 @@ private struct CatalogTab: View {
             LazyVStack(alignment: .leading, spacing: 16) {
                 deviceHeader
 
+                Button(action: onSearchHFTap) {
+                    HStack {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundStyle(.blue)
+                        Text("Search HuggingFace MLX models")
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                    }
+                    .padding(14)
+                    .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
+                }
+                .buttonStyle(.plain)
+
                 if !downloadManager.downloadedModels.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
@@ -186,19 +199,6 @@ private struct CatalogTab: View {
                     }
                     Divider()
                 }
-                
-                Button(action: onSearchHFTap) {
-                    HStack {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundStyle(.blue)
-                        Text("Search HuggingFace MLX models")
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                    }
-                    .padding(14)
-                    .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
-                }
-                .buttonStyle(.plain)
             }
             .padding()
         }
@@ -546,9 +546,15 @@ struct ModelRow: View {
                 // ── Right: status indicator ───────────────────────────────
                 VStack(alignment: .trailing, spacing: 3) {
                     statusBadge
-                    Text(String(format: "%.0f GB", model.ramRequiredGB))
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                    if case .downloaded(let sizeString) = downloadStatus, !sizeString.isEmpty {
+                        Text(sizeString)
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    } else if model.ramRequiredGB > 0 {
+                        Text(String(format: "%.0f GB", model.ramRequiredGB))
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             .padding(.vertical, 4)
