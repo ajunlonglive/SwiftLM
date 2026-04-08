@@ -7,7 +7,8 @@ let package = Package(
     products: [
         .library(name: "MLXInferenceCore", targets: ["MLXInferenceCore"]),
         .executable(name: "SwiftLM", targets: ["SwiftLM"]),
-        .executable(name: "SwiftBuddy", targets: ["SwiftBuddy"])
+        .executable(name: "SwiftBuddy", targets: ["SwiftBuddy"]),
+        .executable(name: "TestE2E", targets: ["TestE2E"])
     ],
     dependencies: [
         // Local Apple MLX Swift fork for C++ extensions
@@ -38,6 +39,14 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/SwiftLM"
+        ),
+        // ── CLI Test E2E ────────────────────────────────────────────
+        .executableTarget(
+            name: "TestE2E",
+            dependencies: [
+                "MLXInferenceCore"
+            ],
+            path: "Sources/TestE2E"
         ),
         // ── macOS GUI App (SwiftBuddy) ──────────────────────────────
         .executableTarget(

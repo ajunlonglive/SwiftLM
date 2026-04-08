@@ -369,7 +369,11 @@ public final class InferenceEngine: ObservableObject {
                 self.state = .generating
 
                 do {
-                    let mlxMessages = messages.map { ["role": $0.role.rawValue, "content": $0.content] }
+                    let mlxMessages = messages.map { 
+                        var roleString = $0.role.rawValue
+                        if roleString == "assistant" { roleString = "model" }
+                        return ["role": roleString, "content": $0.content] 
+                    }
                     var params = GenerateParameters(temperature: config.temperature)
                     params.topP = config.topP
                     params.repetitionPenalty = config.repetitionPenalty
@@ -394,6 +398,15 @@ public final class InferenceEngine: ObservableObject {
                             tokenCount += 1
 
                             if tokenCount >= config.maxTokens { break }
+                            
+                            // Hard-stop constraint for Gemma 2/3 and DeepSeek MoE bounds since MLX fails to parse multi-array JSON eos_token_id manifests.
+                            if outputText.contains("<end_of_turn>") || outputText.contains("<|im_end|>") || outputText.contains("<|eot_id|>") {
+                                let clamped = text.replacingOccurrences(of: "<end_of_turn>", with: "")
+                                                  .replacingOccurrences(of: "<|im_end|>", with: "")
+                                                  .replacingOccurrences(of: "<|eot_id|>", with: "")
+                                continuation.yield(GenerationToken(text: clamped, isThinking: thinkingActive))
+                                break
+                            }
 
                             if config.enableThinking {
                                 if outputText.contains("<think>") && !outputText.contains("</think>") {
