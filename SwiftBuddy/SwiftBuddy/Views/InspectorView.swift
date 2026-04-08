@@ -166,9 +166,9 @@ struct InspectorView: View {
                         TextField("Target Wing (e.g. Einstein)", text: $targetWing)
                             .textFieldStyle(.roundedBorder)
                         
-                        TextEditor(text: $textToMine)
-                            .frame(height: 80)
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
+                        TextField("Paste raw text or context...", text: $textToMine, axis: .vertical)
+                            .lineLimit(4...8)
+                            .textFieldStyle(.roundedBorder)
                         
                         Button(action: {
                             Task {
