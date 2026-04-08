@@ -43,6 +43,9 @@ jobs:
           ls -lh .build/release/SwiftLM
           file .build/release/SwiftLM
 
+      - name: SwiftBuddy Tests (MemPalace & Lifecycle)
+        run: swift test --filter SwiftBuddyTests
+
       - name: TurboQuant unit tests
         run: |
           # Compile and run standalone C++ unit tests for the TurboQuant
