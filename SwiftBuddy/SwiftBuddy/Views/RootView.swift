@@ -8,6 +8,7 @@ import MLXInferenceCore
 struct RootView: View {
     @EnvironmentObject private var engine: InferenceEngine
     @EnvironmentObject private var appearance: AppearanceStore
+    @Environment(\.modelContext) private var modelContext
     @StateObject private var viewModel = ChatViewModel()
     @Query(sort: \PalaceWing.createdDate) var wings: [PalaceWing]
 
@@ -50,12 +51,16 @@ struct RootView: View {
                 }
                 .onAppear {
                     viewModel.engine = engine
+                    viewModel.modelContext = modelContext
                 }
                 .onChange(of: engine.state) { _, state in
                 }
             #else
             iOSTabView
-                .onAppear { viewModel.engine = engine }
+                .onAppear { 
+                    viewModel.engine = engine 
+                    viewModel.modelContext = modelContext
+                }
             #endif
         }
     }
@@ -92,6 +97,13 @@ struct RootView: View {
                                     }
                             } label: {
                                 Label(wing.name, systemImage: "person.crop.circle")
+                            }
+                            .swipeActions {
+                                Button(role: .destructive) {
+                                    modelContext.delete(wing)
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
                             }
                         }
                     }
@@ -212,6 +224,13 @@ struct RootView: View {
                                 Label(wing.name, systemImage: "person.crop.circle")
                             }
                             .buttonStyle(.plain)
+                            .contextMenu {
+                                Button(role: .destructive) {
+                                    modelContext.delete(wing)
+                                } label: {
+                                    Label("Delete Persona", systemImage: "trash")
+                                }
+                            }
                         }
                     }
                 }

@@ -1,6 +1,7 @@
 // ChatViewModel.swift — Bridges InferenceEngine actor to SwiftUI
 import SwiftUI
 import Combine
+import SwiftData
 #if canImport(MLXInferenceCore)
 import MLXInferenceCore
 #endif
@@ -14,9 +15,10 @@ final class ChatViewModel: ObservableObject {
     @Published var config: GenerationConfig = .default
     @Published var systemPrompt: String = ""
     public var currentWing: String? = nil
-
     weak var engine: InferenceEngine?
+    var modelContext: ModelContext?
     private var generationTask: Task<Void, Never>?
+    private var activeSession: ChatSession?
 
     // MARK: — Send
 
@@ -25,6 +27,12 @@ final class ChatViewModel: ObservableObject {
 
         let userMessage = ChatMessage.user(userText)
         messages.append(userMessage)
+
+        if let context = modelContext, let session = activeSession {
+            let turn = ChatTurn(id: userMessage.id, roleRaw: "user", content: userMessage.content, timestamp: userMessage.timestamp, session: session)
+            context.insert(turn)
+            try? context.save()
+        }
 
         isGenerating = true
         streamingText = ""
@@ -152,7 +160,13 @@ final class ChatViewModel: ObservableObject {
                 finalVisible = finalVisible.trimmingCharacters(in: .whitespacesAndNewlines)
                 
                 if !finalVisible.isEmpty {
-                    messages.append(.assistant(finalVisible, thinkingContent: thinkingText))
+                    let msg = ChatMessage.assistant(finalVisible, thinkingContent: thinkingText)
+                    messages.append(msg)
+                    if let context = modelContext, let session = activeSession {
+                        let turn = ChatTurn(id: msg.id, roleRaw: "assistant", content: msg.content, thinkingContent: thinkingText, timestamp: msg.timestamp, session: session)
+                        context.insert(turn)
+                        try? context.save()
+                    }
                 }
             }
 
@@ -169,7 +183,13 @@ final class ChatViewModel: ObservableObject {
     func stopGeneration() {
         generationTask?.cancel()
         if !streamingText.isEmpty {
-            messages.append(.assistant(streamingText, thinkingContent: thinkingText))
+            let msg = ChatMessage.assistant(streamingText, thinkingContent: thinkingText)
+            messages.append(msg)
+            if let context = modelContext, let session = activeSession {
+                let turn = ChatTurn(id: msg.id, roleRaw: "assistant", content: msg.content, thinkingContent: thinkingText, timestamp: msg.timestamp, session: session)
+                context.insert(turn)
+                try? context.save()
+            }
         }
         streamingText = ""
         thinkingText = nil
@@ -178,6 +198,38 @@ final class ChatViewModel: ObservableObject {
 
     func newConversation() {
         stopGeneration()
-        messages = []
+        
+        let targetWing = currentWing ?? "CORE_SYSTEM"
+        
+        if let context = modelContext {
+            let fetchDesc = FetchDescriptor<ChatSession>()
+            let allSessions = try? context.fetch(fetchDesc)
+            
+            // Find session matching this wing
+            let session = allSessions?.first(where: { 
+                if targetWing == "CORE_SYSTEM" { return $0.wingName == nil }
+                return $0.wingName == targetWing 
+            })
+            
+            if let existing = session {
+                activeSession = existing
+                // Restore history chronologically
+                let sortedTurns = existing.turns.sorted { $0.timestamp < $1.timestamp }
+                messages = sortedTurns.map { turn in
+                    let role: ChatMessage.Role = turn.roleRaw == "assistant" ? .assistant : (turn.roleRaw == "system" ? .system : .user)
+                    return ChatMessage(role: role, content: turn.content, thinkingContent: turn.thinkingContent, id: turn.id, timestamp: turn.timestamp)
+                }
+            } else {
+                // Creates the fresh session!
+                let wingParam = targetWing == "CORE_SYSTEM" ? nil : targetWing
+                let newSession = ChatSession(wingName: wingParam)
+                context.insert(newSession)
+                try? context.save()
+                activeSession = newSession
+                messages = []
+            }
+        } else {
+            messages = []
+        }
     }
 }

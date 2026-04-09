@@ -38,7 +38,7 @@ struct SwiftBuddyApp: App {
     var body: some Scene {
         WindowGroup {
             MainContentView(engine: engine, appearance: appearance, server: server)
-                .modelContainer(for: [PalaceWing.self, PalaceRoom.self, MemoryEntry.self])
+                .modelContainer(for: [PalaceWing.self, PalaceRoom.self, MemoryEntry.self, KnowledgeGraphTriple.self, ChatSession.self, ChatTurn.self])
         }
         #if os(macOS)
         .commands {

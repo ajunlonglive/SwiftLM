@@ -64,3 +64,41 @@ final class KnowledgeGraphTriple {
         self.dateObserved = dateObserved
     }
 }
+
+// MARK: - Persistent Chat History 
+
+@Model
+final class ChatSession {
+    @Attribute(.unique) var id: UUID
+    var wingName: String? // nil applies to the 'Core System Chat'
+    var createdAt: Date
+    
+    @Relationship(deleteRule: .cascade, inverse: \ChatTurn.session)
+    var turns: [ChatTurn] = []
+    
+    init(id: UUID = UUID(), wingName: String? = nil, createdAt: Date = Date()) {
+        self.id = id
+        self.wingName = wingName
+        self.createdAt = createdAt
+    }
+}
+
+@Model
+final class ChatTurn {
+    @Attribute(.unique) var id: UUID
+    var roleRaw: String      // "user", "assistant", "system"
+    var content: String
+    var thinkingContent: String?
+    var timestamp: Date
+    
+    var session: ChatSession?
+    
+    init(id: UUID = UUID(), roleRaw: String, content: String, thinkingContent: String? = nil, timestamp: Date = Date(), session: ChatSession? = nil) {
+        self.id = id
+        self.roleRaw = roleRaw
+        self.content = content
+        self.thinkingContent = thinkingContent
+        self.timestamp = timestamp
+        self.session = session
+    }
+}
