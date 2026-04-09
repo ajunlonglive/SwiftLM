@@ -10,6 +10,7 @@ struct RootView: View {
     @EnvironmentObject private var appearance: AppearanceStore
     @Environment(\.modelContext) private var modelContext
     @StateObject private var viewModel = ChatViewModel()
+    @StateObject private var registry = RegistryService.shared
     @Query(sort: \PalaceWing.createdDate) var wings: [PalaceWing]
 
     // iOS: tab selection
@@ -55,6 +56,11 @@ struct RootView: View {
                     viewModel.modelContext = modelContext
                 }
                 .onChange(of: engine.state) { _, state in
+                }
+                .overlay {
+                    if registry.isSyncing {
+                        PersonaExtractionOverlay(registry: registry)
+                    }
                 }
             #else
             iOSTabView
@@ -371,4 +377,118 @@ struct RootView: View {
         }
     }
     #endif
+}
+
+struct PersonaExtractionOverlay: View {
+    @ObservedObject var registry: RegistryService
+    @State private var isBlinking = false
+    
+    var body: some View {
+        ZStack {
+            // Dark transparent backing
+            Color.black.opacity(0.85)
+                .edgesIgnoringSafeArea(.all)
+                
+            VStack(alignment: .leading, spacing: 20) {
+                // Header
+                HStack {
+                    Image(systemName: "cpu")
+                        .font(.system(size: 24))
+                        .foregroundColor(.green)
+                        .symbolEffect(.pulse)
+                    
+                    Text("CONSCIOUSNESS SYNTHESIS")
+                        .font(.system(size: 24, weight: .bold, design: .monospaced))
+                        .foregroundColor(.green)
+                    
+                    Spacer()
+                    
+                    Text(isBlinking ? "_" : "")
+                        .font(.system(size: 24, weight: .bold, design: .monospaced))
+                        .foregroundColor(.green)
+                        .onAppear {
+                            withAnimation(Animation.easeInOut(duration: 0.5).repeatForever()) {
+                                isBlinking.toggle()
+                            }
+                        }
+                }
+                
+                Divider().background(Color.green.opacity(0.5))
+                
+                // Active Extraction Telemetry 
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("> \(registry.lastSyncLog.uppercased())")
+                        .font(.system(size: 14, weight: .bold, design: .monospaced))
+                        .foregroundColor(.green)
+                    
+                    if registry.extractionTotal > 0 {
+                        HStack {
+                            Text("TARGET SECTOR: [\(registry.extractionPhase.uppercased())]")
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundColor(.green.opacity(0.8))
+                            Spacer()
+                            Text("\(registry.extractionProcessed)/\(registry.extractionTotal) VECTORS")
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundColor(.green.opacity(0.8))
+                        }
+                        
+                        // Cyberpunk Progress Bar 
+                        GeometryReader { proxy in
+                            ZStack(alignment: .leading) {
+                                Rectangle()
+                                    .fill(Color.green.opacity(0.2))
+                                    .frame(height: 12)
+                                    .border(Color.green, width: 1)
+                                
+                                Rectangle()
+                                    .fill(Color.green)
+                                    .frame(width: proxy.size.width * CGFloat(registry.extractionProcessed) / CGFloat(max(1, registry.extractionTotal)), height: 12)
+                                    .animation(.spring(), value: registry.extractionProcessed)
+                            }
+                        }
+                        .frame(height: 12)
+                        
+                        // Scroll Matrix Text Preview
+                        ScrollViewReader { scrollProxy in
+                            ScrollView {
+                                Text(registry.currentChunkText)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundColor(.green.opacity(0.6))
+                                    .multilineTextAlignment(.leading)
+                                    .lineSpacing(4)
+                                    .id("bottom")
+                            }
+                            .frame(height: 120)
+                            .padding()
+                            .background(Color.black)
+                            .border(Color.green.opacity(0.5), width: 1)
+                            .onChange(of: registry.currentChunkText) { _ in
+                                scrollProxy.scrollTo("bottom")
+                            }
+                        }
+                    } else {
+                        // Downloading Phase Waiter
+                        HStack {
+                            Text("ESTABLISHING MANIFOLD UPLINK...")
+                                .font(.system(size: 14, design: .monospaced))
+                                .foregroundColor(.green.opacity(0.6))
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(.green)
+                        }
+                        .padding(.top, 20)
+                    }
+                }
+            }
+            .padding(30)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.black.opacity(0.9))
+                    .border(Color.green.opacity(0.6), width: 2)
+            )
+            .shadow(color: .green.opacity(0.3), radius: 20, x: 0, y: 0)
+            .frame(maxWidth: 600)
+        }
+        .zIndex(100)
+    }
 }

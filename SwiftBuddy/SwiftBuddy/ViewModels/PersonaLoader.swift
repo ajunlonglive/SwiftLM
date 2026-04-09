@@ -26,7 +26,7 @@ final class PersonaLoader {
                 
                 // Push every room definition into the Palace
                 for (roomName, fact) in payload.rooms {
-                    try? MemoryPalaceService.shared.saveMemory(
+                    _ = try? MemoryPalaceService.shared.saveMemory(
                         wingName: payload.name,
                         roomName: roomName,
                         text: fact,
@@ -50,7 +50,7 @@ final class PersonaLoader {
         
         for payload in [lumina] {
             for (roomName, fact) in payload.rooms {
-                try? MemoryPalaceService.shared.saveMemory(wingName: payload.name, roomName: roomName, text: fact, type: "Facts")
+                _ = try? MemoryPalaceService.shared.saveMemory(wingName: payload.name, roomName: roomName, text: fact, type: "Facts")
             }
         }
     }
