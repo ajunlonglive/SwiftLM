@@ -101,6 +101,7 @@ struct RootView: View {
                             .swipeActions {
                                 Button(role: .destructive) {
                                     modelContext.delete(wing)
+                                    try? modelContext.save()
                                 } label: {
                                     Label("Delete", systemImage: "trash")
                                 }
@@ -227,6 +228,7 @@ struct RootView: View {
                             .contextMenu {
                                 Button(role: .destructive) {
                                     modelContext.delete(wing)
+                                    try? modelContext.save()
                                 } label: {
                                     Label("Delete Persona", systemImage: "trash")
                                 }
