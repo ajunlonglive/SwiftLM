@@ -78,7 +78,7 @@ struct MessageBubble: View {
             
             // Explicit System Cleanups (don't show the injected context matrix to the user!)
             let cleanText: String = {
-                var text = isUser ? message.content.replacingOccurrences(of: "SYSTEM DIRECTIVE & CONTEXT:(.*?)USER PROMPT:\\n", with: "", options: .regularExpression) : message.content
+                var text = isUser ? message.content.replacingOccurrences(of: "(?s)SYSTEM DIRECTIVE & CONTEXT:.*?USER PROMPT:\\n", with: "", options: .regularExpression) : message.content
                 if isUser {
                     if let range = text.range(of: "\\n\\n\\[RELEVANT MEMORY CONTEXT FOR THIS TURN\\]:", options: .regularExpression) {
                         text = String(text[..<range.lowerBound])
