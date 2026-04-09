@@ -114,44 +114,7 @@ struct InspectorView: View {
                     Text("TOOLS").font(.caption).foregroundColor(.secondary)
                 }
                 
-                // MARK: - Memory Palace
-                Section {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Label("Memory Palace", systemImage: "brain.head.profile")
-                            .font(.headline)
-                        
-                        if wings.isEmpty {
-                            Text("No memories stored yet.")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        } else {
-                            ForEach(wings) { wing in
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Wing: \(wing.name)")
-                                        .font(.subheadline).bold()
-                                    
-                                    ForEach(wing.rooms) { room in
-                                        HStack {
-                                            Text(room.name)
-                                                .font(.caption)
-                                            Spacer()
-                                            Text("\(room.memories.count) facts")
-                                                .font(.caption2)
-                                                .foregroundStyle(.secondary)
-                                        }
-                                        .padding(.leading, 10)
-                                    }
-                                }
-                                .padding(.bottom, 6)
-                            }
-                        }
-                    }
-                    .padding()
-                    .background(Color(nsColor: .controlBackgroundColor))
-                    .cornerRadius(8)
-                } header: {
-                    Text("MEMORY SYSTEM").font(.caption).foregroundColor(.secondary)
-                }
+
                 
                 // MARK: - Cloud Persona Registry
                 Section {
