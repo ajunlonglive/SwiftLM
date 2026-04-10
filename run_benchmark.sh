@@ -38,7 +38,7 @@ if [ "$suite_opt" == "0" ]; then
             MODEL=$(python3 scripts/hf_discovery.py "mlx-community/Qwen Audio Instruct" || echo "mlx-community/Qwen2-Audio-7B-Instruct")
         fi
         
-        echo -e "$TEST_ID\n11\n$MODEL" | ./run_benchmark.sh
+        echo -e "$TEST_ID\n11\n$MODEL" | HEADLESS=1 ./run_benchmark.sh
         sleep 5
     done
     echo "✅ Offline matrix execution fully completed."
@@ -322,7 +322,38 @@ EOF
     echo ""
     echo "Server is up! Sending payload..."
     echo "=== VLM Request ==="
-    curl -sS --max-time 180 http://127.0.0.1:5431/v1/chat/completions -H "Content-Type: application/json" -d @/tmp/vlm_payload.json | python3 -c "import sys,json;d=json.load(sys.stdin);print('\n🤖 VLM Output:', d.get('choices',[{}])[0].get('message',{}).get('content', 'ERROR'))"
+    VLM_RES=$(curl -sS --max-time 180 http://127.0.0.1:5431/v1/chat/completions -H "Content-Type: application/json" -d @/tmp/vlm_payload.json | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('choices',[{}])[0].get('message',{}).get('content', 'ERROR').replace('\n', '<br/>'))")
+    
+    echo -e "\n🤖 VLM Output: $VLM_RES"
+    
+    if [ -z "${HEADLESS:-}" ]; then
+        UI_FILE="/tmp/vlm_ui.html"
+        cat <<EOF > "$UI_FILE"
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #0f1115; color: #E0E0E0; max-width: 700px; margin: 40px auto; line-height: 1.6; }
+    .container { background: #1a1d24; padding: 30px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.8); border: 1px solid #2d313a; }
+    img { max-width: 100%; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
+    .prompt { background: #21252d; padding: 15px; border-left: 4px solid #00ffcc; border-radius: 4px; margin-bottom: 20px; font-weight: 500; font-size: 14px; color: #a1aabf; }
+    .response { background: #16181e; padding: 20px; border-radius: 8px; font-size: 16px; color: #ffffff; border: 1px solid #252932; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
+    h2 { color: #f5f6f8; font-weight: 600; letter-spacing: -0.5px; margin-top: 0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>👁️ SwiftLM Vision Pipeline</h2>
+    <div style="font-size: 13px; color: #727a8e; margin-top: -15px; margin-bottom: 20px;">Model: $FULL_MODEL</div>
+    <img src="data:image/jpeg;base64,${BASE64_IMG}" />
+    <div class="prompt">Prompt: What is in this image? Explain concisely.</div>
+    <div class="response">🤖 $VLM_RES</div>
+  </div>
+</body>
+</html>
+EOF
+        open "$UI_FILE"
+    fi
     
     echo ""
     echo "✅ Test Complete!"
