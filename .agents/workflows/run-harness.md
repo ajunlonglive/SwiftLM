@@ -52,7 +52,7 @@ This workflow executes the persistent TDD harness defined in `.agents/harness/`.
 
 9. Validate ALM pipeline with real-world End-to-End processing:
    ```bash
-   echo -e "5\n11\nmlx-community/Whisper-large-v3-mlx" | ./run_benchmark.sh
+   echo -e "5\n3" | ./run_benchmark.sh
    ```
 
 10. Write a timestamped run log to the appropriate `runs/` directory detailing the status and test output.
