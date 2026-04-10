@@ -9,6 +9,7 @@ echo "=============================================="
 echo ""
 
 echo "Select Action:"
+echo "0) Test 0: Run Full Automated Matrix (Offline Evaluation)"
 echo "1) Test 1: Automated Context & Memory Profile (TPS & RAM matrix)"
 echo "2) Test 2: Prompt Cache & Sliding Window Regression Test"
 echo "3) Test 3: HomeSec Benchmark (LLM Only)"
@@ -16,7 +17,32 @@ echo "4) Test 4: VLM End-to-End Evaluation"
 echo "5) Test 5: ALM Audio End-to-End Evaluation"
 echo "6) Model Maintain List and Delete"
 echo "7) Quit"
-read -p "Option (1-7): " suite_opt
+read -p "Option (0-7): " suite_opt
+
+if [ "$suite_opt" == "0" ]; then
+    echo "=============================================="
+    echo "  RUNNING FULL OFFLINE AUTOMATED MATRIX "
+    echo "=============================================="
+    mkdir -p tmp
+    for TEST_ID in {1..5}; do
+        echo ""
+        echo ">>> Executing Test Suite $TEST_ID <<<"
+        
+        # We manually select a safe fallback model for automated runs
+        MODEL="Qwen3.5-7B-Instruct-4bit"
+        if [ "$TEST_ID" == "4" ]; then
+            MODEL="mlx-community/Qwen2-VL-2B-Instruct-4bit"
+        fi
+        if [ "$TEST_ID" == "5" ]; then
+            MODEL="gemma-4-e4b-it-8bit"
+        fi
+        
+        echo -e "$TEST_ID\n11\n$MODEL" | ./run_benchmark.sh
+        sleep 5
+    done
+    echo "✅ Offline matrix execution fully completed."
+    exit 0
+fi
 
 if [ "$suite_opt" == "7" ] || [ -z "$suite_opt" ]; then
     echo "Exiting."
