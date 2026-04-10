@@ -107,10 +107,10 @@ echo ""
 PS3="Select a model to use: "
 if [ "$suite_opt" == "4" ]; then
     options=(
-        "gemma-4-26b-a4b-it-8bit"
-        "gemma-4-31b-it-8bit"
-        "gemma-4-e4b-it-8bit"
-        "gemma-4-2b-a4b-it-4bit"
+        "mlx-community/gemma-4-26b-a4b-it-8bit"
+        "mlx-community/gemma-4-31b-it-8bit"
+        "mlx-community/gemma-4-e4b-it-8bit"
+        "mlx-community/gemma-4-2b-a4b-it-4bit"
         "mlx-community/Qwen3.5-9B-MLX-4bit"
         "mlx-community/Qwen3.5-27B-4bit"
         "mlx-community/LFM2-VL-1.6B-4bit"
@@ -122,24 +122,24 @@ if [ "$suite_opt" == "4" ]; then
     )
 elif [ "$suite_opt" == "5" ]; then
     options=(
-        "gemma-4-e4b-it-8bit"
-        "gemma-4-2b-a4b-it-4bit"
-        "mlx-community/Qwen2-Audio-7B-Instruct"
+        "mlx-community/gemma-4-e4b-it-8bit"
+        "mlx-community/gemma-4-2b-a4b-it-4bit"
+        "mlx-community/Qwen2-Audio-7B-Instruct-4bit"
         "Custom (Enter your own Hub ID)"
         "Quit"
     )
 else
     options=(
-        "gemma-4-26b-a4b-it-8bit"
-        "gemma-4-31b-it-8bit"
-        "gemma-4-e4b-it-8bit"
-        "gemma-4-26b-a4b-it-4bit"
-        "gemma-4-2b-a4b-it-4bit"
-        "Qwen2.5-7B-Instruct-4bit"
-        "Qwen2.5-14B-Instruct-4bit"
-        "phi-4-mlx-4bit"
+        "mlx-community/gemma-4-26b-a4b-it-8bit"
+        "mlx-community/gemma-4-31b-it-8bit"
+        "mlx-community/gemma-4-e4b-it-8bit"
+        "mlx-community/gemma-4-26b-a4b-it-4bit"
+        "mlx-community/gemma-4-2b-a4b-it-4bit"
+        "mlx-community/Qwen2.5-7B-Instruct-4bit"
+        "mlx-community/Qwen2.5-14B-Instruct-4bit"
+        "mlx-community/phi-4-mlx-4bit"
         "baa-ai/GLM-5.1-RAM-270GB-MLX"
-        "GLM-5.1-4bit"
+        "baa-ai/GLM-5.1-4bit"
         "Custom (Enter your own Hub ID)"
         "Quit"
     )
@@ -322,7 +322,16 @@ EOF
     echo ""
     echo "Server is up! Sending payload..."
     echo "=== VLM Request ==="
-    VLM_RES=$(curl -sS --max-time 180 http://127.0.0.1:5431/v1/chat/completions -H "Content-Type: application/json" -d @/tmp/vlm_payload.json | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('choices',[{}])[0].get('message',{}).get('content', 'ERROR').replace('\n', '<br/>'))")
+    RAW_OUT=$(curl -sS --max-time 180 http://127.0.0.1:5431/v1/chat/completions -H "Content-Type: application/json" -d @/tmp/vlm_payload.json)
+    if [ -z "$RAW_OUT" ] || [[ "$RAW_OUT" == *"curl: "* ]]; then
+        echo "❌ ERROR: Server dropped the connection or crashed!"
+        exit 1
+    fi
+    VLM_RES=$(echo "$RAW_OUT" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('choices',[{}])[0].get('message',{}).get('content', 'ERROR').replace('\n', '<br/>'))")
+    if [ -z "$VLM_RES" ] || [[ "$VLM_RES" == *"ERROR"* ]]; then
+        echo "❌ ERROR: JSON Decode failed!"
+        exit 1
+    fi
     
     echo -e "\n🤖 VLM Output: $VLM_RES"
     
@@ -418,7 +427,17 @@ EOF
     echo ""
     echo "Server is up! Sending payload..."
     echo "=== ALM Request ==="
-    curl -sS --max-time 180 http://127.0.0.1:5431/v1/chat/completions -H "Content-Type: application/json" -d @/tmp/alm_payload.json | python3 -c "import sys,json;d=json.load(sys.stdin);print('\n🎤 ALM Output:', d.get('choices',[{}])[0].get('message',{}).get('content', 'ERROR'))"
+    RAW_ALM_OUT=$(curl -sS --max-time 180 http://127.0.0.1:5431/v1/chat/completions -H "Content-Type: application/json" -d @/tmp/alm_payload.json)
+    if [ -z "$RAW_ALM_OUT" ] || [[ "$RAW_ALM_OUT" == *"curl: "* ]]; then
+        echo "❌ ERROR: Server dropped the connection or crashed!"
+        exit 1
+    fi
+    ALM_RES=$(echo "$RAW_ALM_OUT" | python3 -c "import sys,json;d=json.load(sys.stdin);print('\n🎤 ALM Output:', d.get('choices',[{}])[0].get('message',{}).get('content', 'ERROR'))")
+    if [ -z "$ALM_RES" ] || [[ "$ALM_RES" == *"ERROR"* ]]; then
+        echo "❌ ERROR: JSON Decode failed!"
+        exit 1
+    fi
+    echo "$ALM_RES"
     
     echo ""
     echo "✅ Test Complete!"
