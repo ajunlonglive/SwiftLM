@@ -23,10 +23,10 @@ SwiftLM currently has zero audio support. This harness defines the TDD contract 
 | 1 | `--audio` CLI flag is accepted without crash | ✅ DONE | `testAudio_AudioFlagAccepted` | 2026-04-10 |
 | 2 | Base64 WAV data URI extraction from API content | ✅ DONE | `testAudio_Base64WAVExtraction` | 2026-04-10 |
 | 3 | WAV header parsing: extract sample rate, channels, bit depth | ✅ DONE | `testAudio_WAVHeaderParsing` | 2026-04-10 |
-| 4 | PCM samples → mel spectrogram via FFT | 🔲 TODO | `testAudio_MelSpectrogramGeneration` | — |
-| 5 | Mel spectrogram dimensions match Whisper's expected input (80 bins × N frames) | 🔲 TODO | `testAudio_MelDimensionsCorrect` | — |
-| 6 | Audio longer than 30s is chunked into segments | 🔲 TODO | `testAudio_LongAudioChunking` | — |
-| 7 | Empty/silent audio returns empty transcription (no crash) | 🔲 TODO | `testAudio_SilentAudioHandling` | — |
+| 4 | PCM samples → mel spectrogram via FFT | ✅ DONE | `testAudio_MelSpectrogramGeneration` | 2026-04-10 |
+| 5 | Mel spectrogram dimensions match Whisper's expected input (80 bins × N frames) | ✅ DONE | `testAudio_MelDimensionsCorrect` | 2026-04-10 |
+| 6 | Audio longer than 30s is chunked into segments | ✅ DONE | `testAudio_LongAudioChunking` | 2026-04-10 |
+| 7 | Empty/silent audio returns empty transcription (no crash) | ✅ DONE | `testAudio_SilentAudioHandling` | 2026-04-10 |
 
 ### Phase 2 — Speech-to-Text (STT)
 
