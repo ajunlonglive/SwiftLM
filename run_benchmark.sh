@@ -105,20 +105,36 @@ fi
 
 echo ""
 PS3="Select a model to use: "
-options=(
-    "gemma-4-26b-a4b-it-8bit"
-    "gemma-4-31b-it-8bit"
-    "gemma-4-e4b-it-8bit"
-    "gemma-4-26b-a4b-it-4bit"
-    "gemma-4-2b-a4b-it-4bit"
-    "Qwen2.5-7B-Instruct-4bit"
-    "Qwen2.5-14B-Instruct-4bit"
-    "phi-4-mlx-4bit"
-    "baa-ai/GLM-5.1-RAM-270GB-MLX"
-    "GLM-5.1-4bit"
-    "Custom (Enter your own Hub ID)"
-    "Quit"
-)
+if [ "$suite_opt" == "4" ]; then
+    options=(
+        "mlx-community/Qwen2-VL-2B-Instruct-4bit"
+        "mlx-community/Qwen2-VL-7B-Instruct-4bit"
+        "mlx-community/pixtral-12b-2409-4bit"
+        "Custom (Enter your own Hub ID)"
+        "Quit"
+    )
+elif [ "$suite_opt" == "5" ]; then
+    options=(
+        "mlx-community/Qwen2-Audio-7B-Instruct"
+        "Custom (Enter your own Hub ID)"
+        "Quit"
+    )
+else
+    options=(
+        "gemma-4-26b-a4b-it-8bit"
+        "gemma-4-31b-it-8bit"
+        "gemma-4-e4b-it-8bit"
+        "gemma-4-26b-a4b-it-4bit"
+        "gemma-4-2b-a4b-it-4bit"
+        "Qwen2.5-7B-Instruct-4bit"
+        "Qwen2.5-14B-Instruct-4bit"
+        "phi-4-mlx-4bit"
+        "baa-ai/GLM-5.1-RAM-270GB-MLX"
+        "GLM-5.1-4bit"
+        "Custom (Enter your own Hub ID)"
+        "Quit"
+    )
+fi
 
 select opt in "${options[@]}"
 do
