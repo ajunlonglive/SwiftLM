@@ -347,6 +347,7 @@ public final class InferenceEngine: ObservableObject {
         currentModelId = nil
         state = .idle
         ExpertStreamingConfig.shared.deactivate()
+        ExpertWeightCache.shared.clear()
         MLX.Memory.cacheLimit = 0
     }
 
