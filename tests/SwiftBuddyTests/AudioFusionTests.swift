@@ -1,6 +1,7 @@
 import XCTest
 import MLX
 import MLXInferenceCore
+import MLXLLM
 import Foundation
 
 final class AudioFusionTests: XCTestCase {
@@ -24,7 +25,7 @@ final class AudioFusionTests: XCTestCase {
         """.data(using: .utf8)!
         
         let decoder = JSONDecoder()
-        let config = try decoder.decode(Gemma4ConfigurationMock.self, from: jsonPayload)
+        let config = try decoder.decode(Gemma4Configuration.self, from: jsonPayload)
         
         XCTAssertNotNil(config.audioConfig)
         XCTAssertEqual(config.audioConfig?.hiddenSize, 1024)

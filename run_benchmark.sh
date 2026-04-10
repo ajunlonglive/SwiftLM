@@ -15,9 +15,10 @@ echo "2) Test 2: Prompt Cache & Sliding Window Regression Test"
 echo "3) Test 3: HomeSec Benchmark (LLM Only)"
 echo "4) Test 4: VLM End-to-End Evaluation"
 echo "5) Test 5: ALM Audio End-to-End Evaluation"
-echo "6) Model Maintain List and Delete"
-echo "7) Quit"
-read -p "Option (0-7): " suite_opt
+echo "6) Test 6: Omni End-to-End Evaluation"
+echo "7) Model Maintain List and Delete"
+echo "8) Quit"
+read -p "Option (0-8): " suite_opt
 
 if [ "$suite_opt" == "0" ]; then
     echo "=============================================="
@@ -45,12 +46,12 @@ if [ "$suite_opt" == "0" ]; then
     exit 0
 fi
 
-if [ "$suite_opt" == "7" ] || [ -z "$suite_opt" ]; then
+if [ "$suite_opt" == "8" ] || [ -z "$suite_opt" ]; then
     echo "Exiting."
     exit 0
 fi
 
-if [ "$suite_opt" == "6" ]; then
+if [ "$suite_opt" == "7" ]; then
     echo ""
     echo "=> Downloaded Models Maintenance"
     CACHE_DIR="$HOME/.cache/huggingface/hub"
@@ -110,7 +111,7 @@ if [ "$suite_opt" == "4" ]; then
         "mlx-community/gemma-4-26b-a4b-it-8bit"
         "mlx-community/gemma-4-31b-it-8bit"
         "mlx-community/gemma-4-e4b-it-8bit"
-        "mlx-community/gemma-4-2b-a4b-it-4bit"
+        "mlx-community/gemma-4-26b-a4b-it-4bit"
         "mlx-community/Qwen3.5-9B-MLX-4bit"
         "mlx-community/Qwen3.5-27B-4bit"
         "mlx-community/LFM2-VL-1.6B-4bit"
@@ -120,10 +121,10 @@ if [ "$suite_opt" == "4" ]; then
         "Custom (Enter your own Hub ID)"
         "Quit"
     )
-elif [ "$suite_opt" == "5" ]; then
+elif [ "$suite_opt" == "5" ] || [ "$suite_opt" == "6" ]; then
     options=(
         "mlx-community/gemma-4-e4b-it-8bit"
-        "mlx-community/gemma-4-2b-a4b-it-4bit"
+        "mlx-community/gemma-4-26b-a4b-it-4bit"
         "mlx-community/Qwen2-Audio-7B-Instruct-4bit"
         "Custom (Enter your own Hub ID)"
         "Quit"
@@ -134,7 +135,7 @@ else
         "mlx-community/gemma-4-31b-it-8bit"
         "mlx-community/gemma-4-e4b-it-8bit"
         "mlx-community/gemma-4-26b-a4b-it-4bit"
-        "mlx-community/gemma-4-2b-a4b-it-4bit"
+        "mlx-community/gemma-4-26b-a4b-it-4bit"
         "mlx-community/Qwen2.5-7B-Instruct-4bit"
         "mlx-community/Qwen2.5-14B-Instruct-4bit"
         "mlx-community/phi-4-mlx-4bit"
@@ -396,8 +397,8 @@ if [ "$suite_opt" == "5" ]; then
     echo "Encoding audio to base64..."
     BASE64_AUDIO=$(base64 -i "${AUDIO_PATH}.wav" | tr -d '\n')
     
-    echo "Generating /tmp/alm_payload.json..."
-    cat <<EOF > /tmp/alm_payload.json
+    echo "Generating /tmp/alm_payload_1.json (Turn 1)..."
+    cat <<EOF > /tmp/alm_payload_1.json
 {
   "model": "$FULL_MODEL",
   "max_tokens": 100,
@@ -425,27 +426,147 @@ EOF
     done
     
     echo ""
-    echo "Server is up! Sending payload..."
-    echo "=== ALM Request ==="
-    RAW_ALM_OUT=$(curl -sS --max-time 180 http://127.0.0.1:5431/v1/chat/completions -H "Content-Type: application/json" -d @/tmp/alm_payload.json)
+    echo "Server is up! Sending Turn 1 payload..."
+    echo "=== ALM Request 1 ==="
+    RAW_ALM_OUT=$(curl -sS --max-time 180 http://127.0.0.1:5431/v1/chat/completions -H "Content-Type: application/json" -d @/tmp/alm_payload_1.json)
     if [ -z "$RAW_ALM_OUT" ] || [[ "$RAW_ALM_OUT" == *"curl: "* ]]; then
         echo "❌ ERROR: Server dropped the connection or crashed!"
         exit 1
     fi
-    ALM_RES=$(echo "$RAW_ALM_OUT" | python3 -c "import sys,json;d=json.load(sys.stdin);print('\n🎤 ALM Output:', d.get('choices',[{}])[0].get('message',{}).get('content', 'ERROR'))")
+    ALM_RES=$(echo "$RAW_ALM_OUT" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('choices',[{}])[0].get('message',{}).get('content', 'ERROR'))")
     if [ -z "$ALM_RES" ] || [[ "$ALM_RES" == *"ERROR"* ]]; then
-        echo "❌ ERROR: JSON Decode failed!"
+        echo "❌ ERROR: JSON Decode failed on Turn 1!"
         exit 1
     fi
-    echo "$ALM_RES"
+    echo -e "\n🎤 ALM Output 1: $ALM_RES\n"
     
+    echo "Generating /tmp/alm_payload_2.json (Turn 2 - Closed Loop)..."
+    ASSISTANT_CONTENT_ESCAPED=$(echo "$RAW_ALM_OUT" | python3 -c "import sys,json;print(json.dumps(json.load(sys.stdin).get('choices',[{}])[0].get('message',{}).get('content', 'ERROR')))")
+    
+    cat <<EOF > /tmp/alm_payload_2.json
+{
+  "model": "$FULL_MODEL",
+  "max_tokens": 100,
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {"type": "text", "text": "Transcribe this audio strictly."},
+        {"type": "input_audio", "input_audio": {"data": "${BASE64_AUDIO}", "format": "wav"}}
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": $ASSISTANT_CONTENT_ESCAPED
+    },
+    {
+      "role": "user",
+      "content": [
+        {"type": "text", "text": "Are there any instruments playing in this audio track? List them."},
+        {"type": "input_audio", "input_audio": {"data": "${BASE64_AUDIO}", "format": "wav"}}
+      ]
+    }
+  ]
+}
+EOF
+
+    echo "=== ALM Request 2 (Multi-turn Cache Evaluation) ==="
+    RAW_ALM_OUT_2=$(curl -sS --max-time 180 http://127.0.0.1:5431/v1/chat/completions -H "Content-Type: application/json" -d @/tmp/alm_payload_2.json)
+    if [ -z "$RAW_ALM_OUT_2" ] || [[ "$RAW_ALM_OUT_2" == *"curl: "* ]]; then
+        echo "❌ ERROR: Server dropped the connection or crashed on Turn 2!"
+        exit 1
+    fi
+    ALM_RES_2=$(echo "$RAW_ALM_OUT_2" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('choices',[{}])[0].get('message',{}).get('content', 'ERROR'))")
+    if [ -z "$ALM_RES_2" ] || [[ "$ALM_RES_2" == *"ERROR"* ]]; then
+        echo "❌ ERROR: JSON Decode failed on Turn 2!"
+        exit 1
+    fi
+    echo -e "\n🎤 ALM Output 2: $ALM_RES_2\n"
+
     echo ""
-    echo "✅ Test Complete!"
+    echo "✅ Test Complete! Closed-Loop validation successful."
     
     echo "Cleaning up..."
     killall SwiftLM
     wait $SERVER_PID 2>/dev/null
-    rm -f /tmp/alm_payload.json "${AUDIO_PATH}.wav" "${AUDIO_PATH}.mp3"
+    rm -f /tmp/alm_payload_1.json /tmp/alm_payload_2.json "${AUDIO_PATH}.wav" "${AUDIO_PATH}.mp3"
+    exit 0
+fi
+
+if [ "$suite_opt" == "6" ]; then
+    echo ""
+    echo "=> Starting Test 6: Omni End-to-End Evaluation on $FULL_MODEL"
+    echo "Looking for a test image and audio payload..."
+    
+    mkdir -p tmp
+    IMAGE_PATH="./tmp/omni_dog.jpg"
+    curl -sL "https://images.unsplash.com/photo-1543466835-00a7907e9de1?auto=format&fit=crop&q=80&w=320" -o "$IMAGE_PATH"
+    
+    AUDIO_PATH="./tmp/omni_audio_test"
+    curl -sL "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" -o "${AUDIO_PATH}.mp3" 
+    echo "Converting MP3 to WAV..."
+    afconvert -f WAVE -d LEI16 "${AUDIO_PATH}.mp3" "${AUDIO_PATH}.wav" 
+    
+    if [ ! -f "$IMAGE_PATH" ] || [ ! -f "${AUDIO_PATH}.wav" ]; then
+        echo "Failed to download media assets."
+        exit 1
+    fi
+    
+    echo "Encoding media..."
+    BASE64_IMG=$(base64 -i "$IMAGE_PATH" | tr -d '\n')
+    BASE64_AUDIO=$(base64 -i "${AUDIO_PATH}.wav" | tr -d '\n')
+    
+    echo "Generating /tmp/omni_payload.json..."
+    cat <<EOF > /tmp/omni_payload.json
+{
+  "model": "$FULL_MODEL",
+  "max_tokens": 100,
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {"type": "text", "text": "Describe the image and then describe the audio."},
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,${BASE64_IMG}"}},
+        {"type": "input_audio", "input_audio": {"data": "${BASE64_AUDIO}", "format": "wav"}}
+      ]
+    }
+  ]
+}
+EOF
+
+    echo "Starting Server in background with --vision AND --audio (Omni)..."
+    killall SwiftLM 2>/dev/null
+    $BIN --model "$FULL_MODEL" --vision --audio --port 5431 > ./tmp/omni_server.log 2>&1 &
+    SERVER_PID=$!
+    
+    echo "Waiting for server to be ready on port 5431 (this may take a minute if downloading)..."
+    for i in {1..300}; do
+        if curl -s http://127.0.0.1:5431/health > /dev/null; then break; fi
+        sleep 1
+    done
+    
+    echo ""
+    echo "Server is up! Sending Omni payload..."
+    echo "=== Omni Request ==="
+    RAW_OMNI_OUT=$(curl -sS --max-time 180 http://127.0.0.1:5431/v1/chat/completions -H "Content-Type: application/json" -d @/tmp/omni_payload.json)
+    if [ -z "$RAW_OMNI_OUT" ] || [[ "$RAW_OMNI_OUT" == *"curl: "* ]]; then
+        echo "❌ ERROR: Server dropped the connection or crashed!"
+        exit 1
+    fi
+    OMNI_RES=$(echo "$RAW_OMNI_OUT" | python3 -c "import sys,json;d=json.load(sys.stdin);print('🤖 Omni Output:', d.get('choices',[{}])[0].get('message',{}).get('content', 'ERROR').replace('\n', '<br/>'))")
+    if [ -z "$OMNI_RES" ] || [[ "$OMNI_RES" == *"ERROR"* ]]; then
+        echo "❌ ERROR: JSON Decode failed!"
+        exit 1
+    fi
+    echo -e "\n$OMNI_RES"
+    
+    echo ""
+    echo "✅ Test Complete! Omni evaluation successful."
+    
+    echo "Cleaning up..."
+    killall SwiftLM
+    wait $SERVER_PID 2>/dev/null
+    rm -f /tmp/omni_payload.json "$IMAGE_PATH" "${AUDIO_PATH}.wav" "${AUDIO_PATH}.mp3"
     exit 0
 fi
 

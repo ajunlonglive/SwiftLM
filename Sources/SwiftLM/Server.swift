@@ -19,6 +19,7 @@ import MLX
 import MLXLLM
 import MLXLMCommon
 import MLXVLM
+import MLXInferenceCore
 import Tokenizers
 
 extension LMInput: @retroactive @unchecked Sendable {}
@@ -393,10 +394,21 @@ struct MLXServer: AsyncParsableCommand {
         }()
         let tracker = ProgressTracker(modelId: resolvedModelId)
         
+        let isAudio = self.audio
         let cacheRoot = URL.applicationSupportDirectory
             .appendingPathComponent("MLX", isDirectory: true)
             .appendingPathComponent("HuggingFace", isDirectory: true)
-        if isVision {
+        if isVision && isAudio {
+            print("[SwiftLM] Loading Omni-Language Model (Text + Vision + Audio)...")
+            let downloader = HubDownloader(hub: HubApi(downloadBase: cacheRoot))
+            container = try await OmniModelFactory.shared.loadContainer(
+                from: downloader,
+                using: TransformersTokenizerLoader(),
+                configuration: modelConfig
+            ) { progress in
+                tracker.printProgress(progress)
+            }
+        } else if isVision {
             print("[SwiftLM] Loading VLM (vision-language model)...")
             let downloader = HubDownloader(hub: HubApi(downloadBase: cacheRoot))
             container = try await VLMModelFactory.shared.loadContainer(
@@ -406,7 +418,18 @@ struct MLXServer: AsyncParsableCommand {
             ) { progress in
                 tracker.printProgress(progress)
             }
+        } else if isAudio {
+            print("[SwiftLM] Loading ALM (audio-language model)...")
+            let downloader = HubDownloader(hub: HubApi(downloadBase: cacheRoot))
+            container = try await ALMModelFactory.shared.loadContainer(
+                from: downloader,
+                using: TransformersTokenizerLoader(),
+                configuration: modelConfig
+            ) { progress in
+                tracker.printProgress(progress)
+            }
         } else {
+            print("[SwiftLM] Loading LLM (large language model)...")
             let downloader = HubDownloader(hub: HubApi(downloadBase: cacheRoot))
             container = try await LLMModelFactory.shared.loadContainer(
                 from: downloader,
@@ -933,7 +956,7 @@ actor PromptCache {
 // ── Request Body Extraction ──────────────────────────────────────────────────
 
 func collectBody(_ request: Request) async throws -> Data {
-    var bodyBuffer = try await request.body.collect(upTo: 10 * 1024 * 1024)
+    var bodyBuffer = try await request.body.collect(upTo: 100 * 1024 * 1024)
     let bodyBytes = bodyBuffer.readBytes(length: bodyBuffer.readableBytes) ?? []
     return Data(bodyBytes)
 }
@@ -985,9 +1008,10 @@ func handleChatCompletion(
     for msg in chatReq.messages {
         let textContent = msg.textContent
         let images = msg.extractImages()
+        let audio = msg.extractAudio()
         switch msg.role {
         case "system", "developer":
-            chatMessages.append(.system(textContent, images: images))
+            chatMessages.append(.system(textContent, images: images, audio: audio))
             systemPromptText += textContent
         case "assistant":
             var formattedToolCalls: [[String: any Sendable]]? = nil
@@ -1003,11 +1027,11 @@ func handleChatCompletion(
                     ] as [String: any Sendable]
                 }
             }
-            chatMessages.append(.assistant(textContent, images: images, toolCalls: formattedToolCalls))
+            chatMessages.append(.assistant(textContent, images: images, audio: audio, toolCalls: formattedToolCalls))
         case "tool":
             chatMessages.append(.tool(textContent, toolCallId: msg.tool_call_id))
         default:
-            chatMessages.append(.user(textContent, images: images))
+            chatMessages.append(.user(textContent, images: images, audio: audio))
         }
     }
 
@@ -2078,6 +2102,18 @@ struct ChatCompletionRequest: Decodable {
                 return nil
             }
         }
+
+        /// Extract audio from multipart content
+        func extractAudio() -> [UserInput.Audio] {
+            guard let content = content, case .parts(let parts) = content else { return [] }
+            return parts.compactMap { part -> UserInput.Audio? in
+                guard part.type == "input_audio", let audio = part.inputAudio else { return nil }
+                if let data = Data(base64Encoded: audio.data) {
+                    return .data(data, format: audio.format)
+                }
+                return nil
+            }
+        }
     }
 
     /// Message content: either a plain string or structured multipart content
@@ -2101,16 +2137,23 @@ struct ChatCompletionRequest: Decodable {
         let type: String
         let text: String?
         let imageUrl: ImageUrlContent?
+        let inputAudio: InputAudioContent?
 
         enum CodingKeys: String, CodingKey {
             case type, text
             case imageUrl = "image_url"
+            case inputAudio = "input_audio"
         }
     }
 
     struct ImageUrlContent: Decodable {
         let url: String
         let detail: String?
+    }
+
+    struct InputAudioContent: Decodable {
+        let data: String
+        let format: String
     }
 
     struct ToolDef: Decodable {
@@ -2289,5 +2332,134 @@ struct TokenUsage: Encodable {
         case promptTokens = "prompt_tokens"
         case completionTokens = "completion_tokens"
         case totalTokens = "total_tokens"
+    }
+}
+
+// ── ALM Factory & Tokenizer Bridging ──────────────────────────────────────────
+
+public struct ALMUserInputProcessor: UserInputProcessor, @unchecked Sendable {
+    let tokenizer: MLXLMCommon.Tokenizer
+    let configuration: ModelConfiguration
+    let messageGenerator: MessageGenerator
+    let fusionProcessor: MultimodalFusionProcessor
+
+    public init(
+        tokenizer: any MLXLMCommon.Tokenizer, configuration: ModelConfiguration,
+        messageGenerator: MessageGenerator,
+        boaToken: Int = 255010, eoaToken: Int = 255011
+    ) {
+        self.tokenizer = tokenizer
+        self.configuration = configuration
+        self.messageGenerator = messageGenerator
+        self.fusionProcessor = MultimodalFusionProcessor(boaToken: boaToken, eoaToken: eoaToken)
+    }
+
+    public func prepare(input: UserInput) throws -> LMInput {
+        let messages = messageGenerator.generate(from: input)
+        do {
+            let promptTokensInt = try tokenizer.applyChatTemplate(
+                messages: messages, tools: input.tools, additionalContext: input.additionalContext)
+            
+            // Check if there is audio to interleave
+            if !input.audio.isEmpty {
+                print("[ALM] Interleaving Audio Tokens into prompt.")
+                // Mock num audio embeddings for now - typically derived from the model or audio lengths
+                let rawSequence = fusionProcessor.interleave(
+                    textTokens: promptTokensInt,
+                    numAudioEmbeddings: 128, // Placeholder
+                    audioFirst: true
+                )
+                return LMInput(tokens: MLXArray(rawSequence))
+            }
+            
+            return LMInput(tokens: MLXArray(promptTokensInt))
+        } catch MLXLMCommon.TokenizerError.missingChatTemplate {
+            let prompt = messages.compactMap { $0["content"] as? String }.joined(separator: "\n\n")
+            let promptTokens = tokenizer.encode(text: prompt)
+            return LMInput(tokens: MLXArray(promptTokens))
+        }
+    }
+}
+
+public final class ALMModelFactory: ModelFactory, @unchecked Sendable {
+    public static let shared = ALMModelFactory()
+    public let typeRegistry: ModelTypeRegistry = LLMTypeRegistry.shared
+    public let modelRegistry: AbstractModelRegistry = LLMRegistry.shared
+    
+    public init() {}
+
+    public func _load(
+        configuration: ResolvedModelConfiguration,
+        tokenizerLoader: any TokenizerLoader
+    ) async throws -> ModelContext {
+        let context = try await LLMModelFactory.shared._load(configuration: configuration, tokenizerLoader: tokenizerLoader)
+        
+        let messageGenerator = DefaultMessageGenerator()
+        let processor = ALMUserInputProcessor(
+            tokenizer: context.tokenizer,
+            configuration: context.configuration,
+            messageGenerator: messageGenerator,
+            boaToken: 255010,
+            eoaToken: 255011
+        )
+        
+        return .init(
+            configuration: context.configuration,
+            model: context.model,
+            processor: processor,
+            tokenizer: context.tokenizer
+        )
+    }
+}
+
+public struct OmniUserInputProcessor: UserInputProcessor, @unchecked Sendable {
+    let vlmProcessor: any UserInputProcessor
+    let fusionProcessor: MultimodalFusionProcessor
+    
+    public init(vlmProcessor: any UserInputProcessor, boaToken: Int = 255010, eoaToken: Int = 255011) {
+        self.vlmProcessor = vlmProcessor
+        self.fusionProcessor = MultimodalFusionProcessor(boaToken: boaToken, eoaToken: eoaToken)
+    }
+
+    public func prepare(input: UserInput) async throws -> LMInput {
+        // Run standard VLM image substitution & image array processing
+        let vlmInput = try await vlmProcessor.prepare(input: input)
+        
+        let tokens = vlmInput.text.tokens.asArray(Int.self)
+        
+        if !input.audio.isEmpty && !tokens.isEmpty {
+            print("[Omni] Interleaving Audio Tokens into VLM prompt structure.")
+            let rawSequence = fusionProcessor.interleave(
+                textTokens: tokens,
+                numAudioEmbeddings: 128, // Placeholder until audio config extraction is available globally
+                audioFirst: false // Append audio after vision context typically
+            )
+            return LMInput(text: .init(tokens: MLXArray(rawSequence)), image: vlmInput.image)
+        }
+        
+        return vlmInput
+    }
+}
+
+public final class OmniModelFactory: ModelFactory, @unchecked Sendable {
+    public static let shared = OmniModelFactory()
+    public let typeRegistry: ModelTypeRegistry = VLMTypeRegistry.shared
+    public let modelRegistry: AbstractModelRegistry = VLMRegistry.shared
+    
+    public init() {}
+
+    public func _load(
+        configuration: ResolvedModelConfiguration,
+        tokenizerLoader: any TokenizerLoader
+    ) async throws -> ModelContext {
+        let vlmContext = try await VLMModelFactory.shared._load(configuration: configuration, tokenizerLoader: tokenizerLoader)
+        let omniProcessor = OmniUserInputProcessor(vlmProcessor: vlmContext.processor)
+        
+        return .init(
+            configuration: vlmContext.configuration,
+            model: vlmContext.model,
+            processor: omniProcessor,
+            tokenizer: vlmContext.tokenizer
+        )
     }
 }

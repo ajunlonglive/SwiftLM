@@ -28,6 +28,7 @@ let package = Package(
         .executableTarget(
             name: "SwiftLM",
             dependencies: [
+                "MLXInferenceCore",
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
                 .product(name: "MLXVLM", package: "mlx-swift-lm"),

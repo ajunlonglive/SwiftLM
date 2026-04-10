@@ -91,6 +91,28 @@ Benchmark results for `gemma-4-26b-a4b-it-4bit` (26B MoE, 4-bit) on M5 Pro 64 GB
 
 ---
 
+## 🧠 Supported Models & Methodologies
+
+`SwiftLM` dynamically maps Apple MLX primitives to standard HuggingFace architectures, enabling complete support for the latest frontier open-weights models across modalities (Text, Vision, Audio).
+
+### Text (LLMs)
+- **Gemma 4**: Fully supports both Dense (`gemma-4-e4b`) and Sparse Mixture of Experts (MoE) architectures (`gemma-4-26b`, `gemma-4-31b`).
+- **Qwen 2.5 & 3**: Robust support for sliding window attention limits and custom RoPE scaling.
+- **Mistral & Mixtral**: Out-of-the-box structural mappings.
+- **Phi-3 & Phi-3.5**: Full 128k context parsing via Swift chunked-prefill.
+
+### Vision (VLMs)
+*Run with `--vision` flag.*
+- **Qwen2-VL & Qwen3-VL**: Real-time positional bounding and Metal image scaling.
+- **PaliGemma / LFM2-VL / Pixtral**: Base64 spatial decomposition.
+
+### Audio (ALMs)
+*Run with `--audio` flag.*
+- **Qwen2-Audio (7B-Instruct)**: Deep multi-modal spectrogram processing via Swift audio interleaving.
+- **Gemma-4 Audio Pipelines**: Ready for Audio-in/Text-out variants mapping `.audio_tower` extraction parameters natively off NVMe.
+
+---
+
 ## 📱 SwiftBuddy — iOS App
 
 A native iPhone & iPad companion app that downloads MLX models directly from HuggingFace and runs inference on-device via MLX Swift.
