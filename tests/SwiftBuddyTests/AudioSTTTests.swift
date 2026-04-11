@@ -9,9 +9,10 @@ final class AudioSTTTests: XCTestCase {
     }
     
     // Feature 8: Whisper model type registered in ALM factory
-    func testAudio_WhisperRegistered() {
+    func testAudio_WhisperRegistered() async {
         let registry = ALMTypeRegistry.shared
-        XCTAssertNotNil(registry.creator(for: "whisper"), "Whisper key must be registered as a valid model creator")
+        let creator = await registry.creator(for: "whisper")
+        XCTAssertNotNil(creator, "Whisper key must be registered as a valid model creator")
     }
 
     // Feature 9: Whisper encoder produces valid hidden states
