@@ -8,10 +8,7 @@ final class VLMProcessorTests: XCTestCase {
 
     // Feature 4: Reject request with no image when model requires one
     func testVLM_RejectMissingImage() async throws {
-        let registry = VLMProcessorTypeRegistry.shared
-        
         // We know PaliGemmaProcessor throws if given no images
-        let dummyData = "{}".data(using: .utf8)!
         let dummyTokenizer = MockTokenizer()
         
         let json = """
@@ -30,7 +27,7 @@ final class VLMProcessorTests: XCTestCase {
         let input = UserInput(prompt: "Hello", images: [])
         
         do {
-            _ = try await processor.prepare(input: input)
+            _ = try processor.prepare(input: input)
             XCTFail("Should have thrown imageRequired")
         } catch VLMError.imageRequired {
             // Success

@@ -42,7 +42,7 @@
       "location" : "https://github.com/SharpAI/mlx-swift-lm.git",
       "state" : {
         "branch" : "feature/papps-ssd-streaming",
-        "revision" : "b871e30c10350b1a9c71e650a980c900734fe837"
+        "revision" : "c0c2624b9a7d406a2418e2981d9efe701780561d"
       }
     },
     {
