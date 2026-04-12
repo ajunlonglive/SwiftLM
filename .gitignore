@@ -27,3 +27,4 @@ tmp/
 3rd_party/
 .agents/harness/audio-omni-gemma4/runs/
 .venv/
+mem-palace/
