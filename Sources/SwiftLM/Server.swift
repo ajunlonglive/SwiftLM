@@ -1244,15 +1244,13 @@ struct ThinkingStateTracker {
         while !buffer.isEmpty {
             switch phase {
             case .responding:
-                let startRange = buffer.range(of: "<thinking>") ?? buffer.range(of: "<think>")
+                let startRange = buffer.range(of: "<thinking>") ?? buffer.range(of: "<think>") ?? buffer.range(of: "<|channel|>thought")
                 if let range = startRange {
                     // Flush text before the tag as response content
                     content += String(buffer[buffer.startIndex..<range.lowerBound])
                     buffer.removeSubrange(buffer.startIndex..<range.upperBound)
                     phase = .thinking
-                } else if buffer.hasSuffix("<") || buffer.hasSuffix("<t") || buffer.hasSuffix("<th") ||
-                          buffer.hasSuffix("<thi") || buffer.hasSuffix("<thin") || buffer.hasSuffix("<think") ||
-                          buffer.hasSuffix("<thinki") || buffer.hasSuffix("<thinkin") || buffer.hasSuffix("<thinking") {
+                } else if isPartialThinkingTag(buffer) {
                     // Partial tag — hold in buffer until we know more
                     return (reasoning, content)
                 } else {
@@ -1260,7 +1258,7 @@ struct ThinkingStateTracker {
                     buffer = ""
                 }
             case .thinking:
-                let endRange = buffer.range(of: "</thinking>") ?? buffer.range(of: "</think>")
+                let endRange = buffer.range(of: "</thinking>") ?? buffer.range(of: "</think>") ?? buffer.range(of: "<channel|>")
                 if let range = endRange {
                     // Flush reasoning before the closing tag
                     reasoning += String(buffer[buffer.startIndex..<range.lowerBound])
@@ -1278,8 +1276,19 @@ struct ThinkingStateTracker {
         return (reasoning, content)
     }
 
+    private func isPartialThinkingTag(_ s: String) -> Bool {
+        // Check if s ends with a prefix of any opening thinking tag
+        let openTags = ["<thinking>", "<think>", "<|channel|>thought"]
+        for tag in openTags {
+            for len in stride(from: min(s.count, tag.count), through: 1, by: -1) {
+                if s.hasSuffix(String(tag.prefix(len))) { return true }
+            }
+        }
+        return false
+    }
+
     private func isSuffixOfClosingTag(_ s: String) -> Bool {
-        let tags = ["</think>", "</thinking>"]
+        let tags = ["</think>", "</thinking>", "<channel|>"]
         for tag in tags {
             for len in stride(from: min(s.count, tag.count), through: 1, by: -1) {
                 let tagPrefix = String(tag.prefix(len))
@@ -2458,10 +2467,7 @@ public final class ALMModelFactory: ModelFactory, @unchecked Sendable {
         configuration: ResolvedModelConfiguration,
         tokenizerLoader: any TokenizerLoader
     ) async throws -> ModelContext {
-        // Use VLMModelFactory so the Gemma4 audio tower and embedding projector are
-        // correctly initialized. LLMModelFactory omits the VLM type registry, which
-        // prevents the audio tower from loading regardless of quantization level.
-        let context = try await VLMModelFactory.shared._load(configuration: configuration, tokenizerLoader: tokenizerLoader)
+        let context = try await LLMModelFactory.shared._load(configuration: configuration, tokenizerLoader: tokenizerLoader)
         
         let numAudioEmbeddings = OmniModelFactory.extractNumAudioEmbeddings(configuration: configuration)
         let messageGenerator = DefaultMessageGenerator()

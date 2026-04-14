@@ -418,12 +418,12 @@ if [ "$suite_opt" == "5" ]; then
 {
   "model": "$FULL_MODEL",
   "max_tokens": 500,
-  "thinking": false,
+  "enable_thinking": false,
   "messages": [
     {
       "role": "user",
       "content": [
-        {"type": "text", "text": "Transcribe this audio strictly."},
+        {"type": "text", "text": "Transcribe this audio clip word for word. Output only the transcription, nothing else."},
         {"type": "input_audio", "input_audio": {"data": "${BASE64_AUDIO}", "format": "wav"}}
       ]
     }
@@ -433,12 +433,6 @@ EOF
 
     echo "Starting Server in background with --audio..."
     killall SwiftLM 2>/dev/null
-    # Wait for port 5431 to fully drain before starting fresh server
-    for i in {1..15}; do
-        lsof -ti tcp:5431 > /dev/null 2>&1 || break
-        sleep 0.5
-    done
-    : > ./tmp/alm_server.log  # Truncate stale log
     $BIN --model "$FULL_MODEL" --audio --port 5431 > ./tmp/alm_server.log 2>&1 &
     SERVER_PID=$!
     
@@ -461,26 +455,34 @@ EOF
         echo "❌ ERROR: Server dropped the connection or crashed!"
         exit 1
     fi
-    ALM_RES=$(echo "$RAW_ALM_OUT" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('choices',[{}])[0].get('message',{}).get('content', 'ERROR'))")
+    # Extract content and strip any thinking blocks (content between <|channel>thought ... </|channel>)
+    ALM_RES=$(echo "$RAW_ALM_OUT" | python3 -c "
+import sys, json, re
+d = json.load(sys.stdin)
+content = d.get('choices',[{}])[0].get('message',{}).get('content', '')
+# Strip thinking blocks
+content = re.sub(r'<\|channel\>thought.*?(?=\n[A-Z]|$)', '', content, flags=re.DOTALL).strip()
+print(content if content else 'ERROR')
+")
     if [ -z "$ALM_RES" ] || [[ "$ALM_RES" == *"ERROR"* ]]; then
         echo "❌ ERROR: JSON Decode failed on Turn 1!"
         exit 1
     fi
-    echo -e "\n🎤 ALM Output 1: $ALM_RES\n"
+    echo -e "\n🎤 ALM Turn 1 Transcription:\n  → $ALM_RES\n"
     
     echo "Generating /tmp/alm_payload_2.json (Turn 2 - Closed Loop)..."
-    ASSISTANT_CONTENT_ESCAPED=$(echo "$RAW_ALM_OUT" | python3 -c "import sys,json;print(json.dumps(json.load(sys.stdin).get('choices',[{}])[0].get('message',{}).get('content', 'ERROR')))")
+    ASSISTANT_CONTENT_ESCAPED=$(echo "$RAW_ALM_OUT" | python3 -c "import sys,json;print(json.dumps(json.load(sys.stdin).get('choices',[{}])[0].get('message',{}).get('content', '')))")
     
     cat <<EOF > /tmp/alm_payload_2.json
 {
   "model": "$FULL_MODEL",
-  "max_tokens": 500,
-  "thinking": false,
+  "max_tokens": 200,
+  "enable_thinking": false,
   "messages": [
     {
       "role": "user",
       "content": [
-        {"type": "text", "text": "Transcribe this audio strictly."},
+        {"type": "text", "text": "Transcribe this audio clip word for word. Output only the transcription, nothing else."},
         {"type": "input_audio", "input_audio": {"data": "${BASE64_AUDIO}", "format": "wav"}}
       ]
     },
@@ -490,7 +492,7 @@ EOF
     },
     {
       "role": "user",
-      "content": "According to the audio you just transcribed, what do machine learning systems require? Answer concisely."
+      "content": "In one sentence, summarize what the speaker said."
     }
   ]
 }
@@ -502,12 +504,18 @@ EOF
         echo "❌ ERROR: Server dropped the connection or crashed on Turn 2!"
         exit 1
     fi
-    ALM_RES_2=$(echo "$RAW_ALM_OUT_2" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('choices',[{}])[0].get('message',{}).get('content', 'ERROR'))")
+    ALM_RES_2=$(echo "$RAW_ALM_OUT_2" | python3 -c "
+import sys, json, re
+d = json.load(sys.stdin)
+content = d.get('choices',[{}])[0].get('message',{}).get('content', '')
+content = re.sub(r'<\|channel\>thought.*?(?=\n[A-Z]|$)', '', content, flags=re.DOTALL).strip()
+print(content if content else 'ERROR')
+")
     if [ -z "$ALM_RES_2" ] || [[ "$ALM_RES_2" == *"ERROR"* ]]; then
         echo "❌ ERROR: JSON Decode failed on Turn 2!"
         exit 1
     fi
-    echo -e "\n🎤 ALM Output 2: $ALM_RES_2\n"
+    echo -e "\n🎤 ALM Turn 2 Summary:\n  → $ALM_RES_2\n"
 
     echo ""
     echo "✅ Test Complete! Closed-Loop validation successful."
