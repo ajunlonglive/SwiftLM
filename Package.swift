@@ -10,9 +10,24 @@ let package = Package(
         .executable(name: "SwiftBuddy", targets: ["SwiftBuddy"])
     ],
     dependencies: [
-        // Local Apple MLX Swift fork for C++ extensions
-        .package(path: "./mlx-swift"),
-        // Apple's LLM library built on MLX Swift (SharpAI fork — with GPU/CPU layer partitioning)
+        // ── Dependency Update Flow ────────────────────────────────────────────────
+        // ml-explore/mlx-swift  →  SharpAI/mlx-swift (sync bot PR + CI)  →  tag here
+        // ml-explore/mlx-swift-lm → SharpAI/mlx-swift-lm (sync bot + Omni/SSD patches) → submodule SHA
+        //
+        // When a new SharpAI/mlx-swift tag is released, update_dependencies.yml
+        // opens an automated PR bumping the version below. Do NOT float on branch: "main"
+        // or you will inherit Apple upstream regressions immediately.
+        //
+        // ── Local Debug Override ──────────────────────────────────────────────────
+        // To debug mlx-swift locally, comment the URL line and uncomment the path line:
+        //   .package(path: "./mlx-swift"),
+        // To debug mlx-swift-lm locally, it is already a submodule at ./mlx-swift-lm
+        // ─────────────────────────────────────────────────────────────────────────
+
+        // SharpAI fork of Apple MLX Swift — version-locked to a validated tag
+        .package(url: "https://github.com/SharpAI/mlx-swift.git", exact: "0.30.6"),
+        // SharpAI fork of mlx-swift-lm — pinned via git submodule SHA (see .gitmodules)
+        // Submodule tag is bumped automatically by update_dependencies.yml on new releases
         .package(path: "./mlx-swift-lm"),
         // HuggingFace tokenizers + model download
         .package(url: "https://github.com/huggingface/swift-transformers", .upToNextMinor(from: "1.2.0")),
