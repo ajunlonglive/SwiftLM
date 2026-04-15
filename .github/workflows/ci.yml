@@ -156,7 +156,7 @@ jobs:
           pip install --upgrade pip setuptools wheel pybind11 cmake
           cd .build/checkouts/mlx-swift/Source/Cmlx/mlx
           python setup.py build_ext --inplace
-          cp build/lib.*/mlx/lib/mlx.metallib ../../../../../../release/mlx.metallib
+          cp build/lib.*/mlx/lib/mlx.metallib ../../../../../../.build/release/mlx.metallib
 
       - name: Cache MLX models (draft + main)
         uses: actions/cache@v4
@@ -231,7 +231,7 @@ jobs:
           pip install --upgrade pip setuptools wheel pybind11 cmake
           cd .build/checkouts/mlx-swift/Source/Cmlx/mlx
           python setup.py build_ext --inplace
-          cp build/lib.*/mlx/lib/mlx.metallib ../../../../../../release/mlx.metallib
+          cp build/lib.*/mlx/lib/mlx.metallib ../../../../../../.build/release/mlx.metallib
       
       - name: Run speculative evaluation E2E
         env:
