@@ -1,6 +1,6 @@
-### `baa-ai/GLM-5.1-RAM-270GB-MLX` — Context & Memory Profile
+### `mlx-community/gemma-4-26b-a4b-it-4bit` — Context & Memory Profile
 
-Context depths tested: 512,40000,100000
+Context depths tested: 512
 
 | Configuration | Context Size | TTFT | Generation Speed | Model Size | Active RAM (Physical) | GPU Memory Allocated |
 |---|---|---|---|---|---|---|

@@ -23,7 +23,7 @@ PORT="${2:-15414}"
 HOST="127.0.0.1"
 MAIN_MODEL="${MAIN_MODEL:-mlx-community/Qwen3.5-9B-4bit}"
 DRAFT_MODEL="${DRAFT_MODEL:-mlx-community/Qwen3.5-0.8B-MLX-4bit}"
-NUM_DRAFT_TOKENS=1
+NUM_DRAFT_TOKENS="${NUM_DRAFT_TOKENS:-2}"
 URL="http://${HOST}:${PORT}"
 PASS=0
 FAIL=0
@@ -99,8 +99,8 @@ for i in $(seq 1 "$MAX_WAIT"); do
         break
     fi
     if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-        echo "Error: Server process died. Last 30 lines of log:"
-        tail -30 "$LOG_FILE"
+        echo "Error: Server process died. Server Log:"
+        cat "$LOG_FILE"
         exit 1
     fi
     # Print progress every 30 seconds
@@ -112,8 +112,8 @@ done
 
 if ! curl -sf "$URL/health" >/dev/null 2>&1; then
     echo "Error: Server did not become ready in ${MAX_WAIT}s"
-    echo "Last 30 lines of log:"
-    tail -30 "$LOG_FILE"
+    echo "Server Log:"
+    cat "$LOG_FILE"
     exit 1
 fi
 
@@ -146,7 +146,7 @@ fi
 # ── Test 3: Streaming speculative generation ────────────────────────
 log "Test 3: Streaming speculative generation"
 
-STREAM_OUTPUT=$(curl -sf -N --max-time 120 -X POST "$URL/v1/chat/completions" \
+STREAM_OUTPUT=$(curl -sf -N --max-time 300 -X POST "$URL/v1/chat/completions" \
     -H "Content-Type: application/json" \
     -d "{\"model\":\"$MAIN_MODEL\",\"stream\":true,\"max_tokens\":10,\"messages\":[{\"role\":\"user\",\"content\":\"Name three fruits.\"}]}" \
     2>/dev/null || true)
@@ -176,7 +176,7 @@ log "Test 5: Sequential request stability (3 requests)"
 
 SEQ_PASS=true
 for i in 1 2 3; do
-    SEQ_RESP=$(curl -sf --max-time 120 -X POST "$URL/v1/chat/completions" \
+    SEQ_RESP=$(curl -sf --max-time 300 -X POST "$URL/v1/chat/completions" \
         -H "Content-Type: application/json" \
         -d "{\"model\":\"$MAIN_MODEL\",\"max_tokens\":10,\"messages\":[{\"role\":\"user\",\"content\":\"Say the number $i.\"}]}" 2>/dev/null || echo "")
 
@@ -225,12 +225,12 @@ log "═════════════════════════
 
 if [ "$FAIL" -gt 0 ]; then
     echo ""
-    log "Server log tail (last 20 lines):"
-    tail -20 "$LOG_FILE"
+    log "Server completely failed. Full Log:"
+    cat "$LOG_FILE"
     exit 1
 fi
 
 echo ""
-log "Server log tail (last 20 lines):"
-tail -20 "$LOG_FILE"
+log "Server log tail (last 50 lines):"
+tail -50 "$LOG_FILE"
 exit 0

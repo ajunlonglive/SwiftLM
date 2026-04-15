@@ -1,5 +1,8 @@
 # ⚡️ SwiftLM
 
+> [!WARNING]
+> **DEVELOPMENT NOTE:** The `mlx-swift-lm` SPM dependency is currently locked to the unmerged testing branch `feature/papps-ssd-streaming`. Do not merge to `main` without completing the module integration tests and reverting the URL target constraints.
+
 A blazingly fast, native Swift inference server that serves [MLX](https://github.com/ml-explore/mlx) models with a strict **OpenAI-compatible API**. 
 
 No Python runtime, no Global Interpreter Lock (GIL), no unnecessary memory copies. Just bare-metal Apple Silicon performance compiled to a single binary.
@@ -80,10 +83,34 @@ Benchmark results for `gemma-4-26b-a4b-it-4bit` (26B MoE, 4-bit) on M5 Pro 64 GB
 - 🍎 **100% Native Apple Silicon**: Powered natively by Metal and Swift. 
 - 🔌 **OpenAI-compatible**: Drop-in replacement for OpenAI SDKs (`/v1/chat/completions`, streaming, etc).
 - 🧠 **Smart Model Routing**: Loads HuggingFace format models directly, with native Safetensors parsing.
+- 👁️ **Vision-Language Models (VLM)**: Native multimodal vision processing natively on Metal via the `--vision` flag, supporting real-time base64 image parsing (e.g., Qwen2-VL, PaliGemma).
+- 🎧 **Audio-Language Models (ALM)**: High-performance audio ingestion via the `--audio` flag, decoding OpenAI-spec `input_audio` payloads with AVFoundation WAV extraction.
 - ⚡️ **TurboQuantization Integrated**: Custom low-level MLX Metal primitives that apply extremely fast quantization for KV caching out-of-the-box.
 - 💾 **SSD Expert Streaming (10x)**: High-performance NVMe streaming that loads Mixture of Experts (MoE) layers directly from SSD to GPU — engineered by [@ericjlake](https://github.com/ericjlake), achieving **10x speedup** (0.58 → 5.91 tok/s) on 122B+ models with only ~10 GB resident memory. Uses cross-projection batching, concurrent pread (QD=24), asyncEval pipeline, and runtime top-k expert selection.
 - 🔮 **Speculative Decoding**: Load a small draft model (e.g. 9B) alongside a large main model to generate candidate tokens and verify in bulk — accelerating in-RAM inference.
 - 🎛️ **Granular Memory Control**: Integrated Layer Partitioning (`--gpu-layers`) and Wisdom Auto-Calibration for squeezing massive models into RAM.
+
+---
+
+## 🧠 Supported Models & Methodologies
+
+`SwiftLM` dynamically maps Apple MLX primitives to standard HuggingFace architectures, enabling complete support for the latest frontier open-weights models across modalities (Text, Vision, Audio).
+
+### Text (LLMs)
+- **Gemma 4**: Fully supports both Dense (`gemma-4-e4b`) and Sparse Mixture of Experts (MoE) architectures (`gemma-4-26b`, `gemma-4-31b`).
+- **Qwen 2.5 & 3**: Robust support for sliding window attention limits and custom RoPE scaling.
+- **Mistral & Mixtral**: Out-of-the-box structural mappings.
+- **Phi-3 & Phi-3.5**: Full 128k context parsing via Swift chunked-prefill.
+
+### Vision (VLMs)
+*Run with `--vision` flag.*
+- **Qwen2-VL & Qwen3-VL**: Real-time positional bounding and Metal image scaling.
+- **PaliGemma / LFM2-VL / Pixtral**: Base64 spatial decomposition.
+
+### Audio (ALMs)
+*Run with `--audio` flag.*
+- **Qwen2-Audio (7B-Instruct)**: Deep multi-modal spectrogram processing via Swift audio interleaving.
+- **Gemma-4 Audio Pipelines**: Ready for Audio-in/Text-out variants mapping `.audio_tower` extraction parameters natively off NVMe.
 
 ---
 
@@ -205,6 +232,18 @@ SwiftLM --port 8002 \
 
 ---
 
+## 🔀 Why We Forked Apple MLX
+
+To achieve the extreme memory efficiency and speeds seen in **SSD Expert Streaming** and **Speculative Decoding**, `SwiftLM` relies on custom C++ primitives that bypass standard unified memory limits.
+
+> [!NOTE]
+> We maintain custom forks (`SharpAI/mlx` and `SharpAI/mlx-c`) to support **out-of-core memory-mapped execution**, streaming tensor blocks directly from the SSD (NVMe) to the GPU via custom Metal kernels (`ssd_streamer.mm` and `fence.air`). Official `ml-explore` repositories do not yet support this out-of-the-box.
+
+For a detailed breakdown on repository architecture, upstream synchronization, our specific custom patches, and the specific indications for when we can safely revert to Apple's native upstream, read the full documentation: 
+👉 **[Upstream MLX Synchronization & SSD Streaming Maintenance](.agents/workflows/mlx-upstream-sync.md)**
+
+---
+
 ## 💻 Benchmarks & Testing
 
 Run our automated benchmark suites via the interactive script:
@@ -274,6 +313,31 @@ curl http://localhost:5413/v1/chat/completions \
 ```
 ---
 
+### Vision-Language Models (VLM)
+To run a vision model (e.g., `mlx-community/Qwen2-VL-2B-Instruct-4bit`), launch SwiftLM with the `--vision` flag:
+```bash
+./.build/release/SwiftLM --model mlx-community/Qwen2-VL-2B-Instruct-4bit --vision
+```
+
+You can then pass standard OpenAI base64 encoded images directly. SwiftLM handles hardware spatial-mapping natively via Metal:
+```bash
+curl http://localhost:5413/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen2-vl",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {"type": "text", "text": "Describe the contents of this image."},
+          {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ..."}}
+        ]
+      }
+    ]
+  }'
+```
+---
+
 
 ## ⚙️ CLI Options
 
@@ -282,6 +346,8 @@ curl http://localhost:5413/v1/chat/completions \
 | `--model` | (required) | HuggingFace model ID or local path |
 | `--port` | `5413` | Port to listen on |
 | `--host` | `127.0.0.1` | Host to bind |
+| `--vision` | `false` | Enable VLM (vision-language model) mode for image inputs |
+| `--audio` | `false` | Enable ALM (audio-language model) mode for audio inputs |
 | `--max-tokens` | `2048` | Max tokens limit per generation |
 | `--prefill-size`| `512`  | Prompt prefill chunk size (micro-batching for long contexts) |
 | `--gpu-layers` | `model_default`| Restrict the amount of layers allocated to GPU hardware |
