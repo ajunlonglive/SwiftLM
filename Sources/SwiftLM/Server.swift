@@ -1146,9 +1146,16 @@ func handleChatCompletion(
             }
         }
 
+        // ── Prompt cache: bypass for multimodal inputs ──
+        // The prompt cache only stores KV state for text token sequences. For multimodal
+        // requests (image/audio), prepare() must inject the vision/audio feature embeddings
+        // before the language model runs. A cache hit would skip that injection, feeding
+        // raw <|image|>/<|audio|> token embeddings instead of the projected features.
+        let isMultimodalRequest = lmInput.image != nil || lmInput.audio != nil
+
         // Try to restore via token-by-token prefix match (llama-server style)
         var stream: AsyncStream<Generation>
-        if let cachedCount = await promptCache.restore(newTokens: promptTokens, into: cache) {
+        if !isMultimodalRequest, let cachedCount = await promptCache.restore(newTokens: promptTokens, into: cache) {
             // Cache hit: KV state is pre-populated up to cachedCount tokens.
             // Only compute the remaining (new) tokens.
             var startIndex = cachedCount
