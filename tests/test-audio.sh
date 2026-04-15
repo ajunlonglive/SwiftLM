@@ -75,7 +75,7 @@ python3 /tmp/audio_test/gen.py
 BASE64_AUDIO=$(base64 -i /tmp/audio_test/test.wav | tr -d '\n')
 
 cat <<EOF > /tmp/audio_test/payload.json
-{"model":"$MODEL","max_tokens":100,"messages":[{"role":"user","content":[{"type":"text","text":"Transcribe this audio strictly."},{"type":"input_audio","input_audio":{"data":"${BASE64_AUDIO}","format":"wav"}}]}]}
+{"model":"$MODEL","max_tokens":100,"messages":[{"role":"user","content":[{"type":"text","text":"Describe the acoustic characteristics of this audio. Is it a beep, speech, or silence? Please be concise."},{"type":"input_audio","input_audio":{"data":"${BASE64_AUDIO}","format":"wav"}}]}]}
 EOF
 
 COMPLETION=$(curl -sf -X POST "$URL/v1/chat/completions" \
