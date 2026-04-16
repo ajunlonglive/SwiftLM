@@ -25,7 +25,7 @@ let package = Package(
         // ─────────────────────────────────────────────────────────────────────────
 
         // SharpAI fork of Apple MLX Swift — version-locked to a validated tag
-        .package(url: "https://github.com/SharpAI/mlx-swift.git", exact: "0.30.6"),
+        .package(url: "https://github.com/SharpAI/mlx-swift.git", revision: "b457"),
         // SharpAI fork of mlx-swift-lm — pinned via git submodule SHA (see .gitmodules)
         // Submodule tag is bumped automatically by update_dependencies.yml on new releases
         .package(path: "./mlx-swift-lm"),
