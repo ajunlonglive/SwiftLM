@@ -10,7 +10,7 @@ import sys
 import os
 
 CONFIGS = [
-    {"name": "Dense/Vanilla", "flags": []},
+    {"name": "Vanilla", "flags": []},
     {"name": "SSD Stream", "flags": ["--stream-experts"]},
     {"name": "TurboQuant", "flags": ["--turbo-kv"]},
     {"name": "SSD + TurboQuant", "flags": ["--stream-experts", "--turbo-kv"]},
@@ -218,10 +218,11 @@ def make_request_stream(prompt_len, max_tokens, port=5422):
             total_time = time.time() - start
             gen_time = total_time - ttft if ttft else 0
             tps = (tokens - 1) / gen_time if gen_time > 0 and tokens > 1 else 0
-            return True, ttft, tps
+            prefill_tps = prompt_len / ttft if (ttft and ttft > 0) else 0
+            return True, ttft, tps, prefill_tps
     except Exception as e:
         print(f"Request failed: {e}")
-        return False, 0, 0
+        return False, 0, 0, 0
 
 def extract_base_memory(log_path):
     try:
@@ -339,7 +340,7 @@ def main():
         
         for ctx_size in context_sizes:
             print(f"\n>> Running {ctx_size}-token context test (max generation 60)...")
-            ok, ttft, tps = make_request_stream(prompt_len=ctx_size, max_tokens=60)
+            ok, ttft, tps, prefill_tps = make_request_stream(prompt_len=ctx_size, max_tokens=60)
             
             # Wait for server to flush post-generation logs
             time.sleep(1)
@@ -355,12 +356,13 @@ def main():
                     "context": ctx_size,
                     "ttft": f"{ttft:.2f}",
                     "tps": f"{tps:.2f}",
+                    "prefill_tps": f"{prefill_tps:.2f}",
                     "static_mem": static_mem,
                     "os_ram": os_ram,
                     "gpu_alloc": f"{gpu_alloc:.1f}",
                     "gpu_in_use": f"{gpu_in_use:.1f}",
                 })
-                print(f"  TTFT={ttft:.2f}s  TPS={tps:.2f}  OS_RAM={os_ram}GB  GPU_Alloc={gpu_alloc:.1f}GB  GPU_InUse={gpu_in_use:.1f}GB")
+                print(f"  Prefill={prefill_tps:.0f} tok/s  TTFT={ttft:.2f}s  Gen={tps:.2f} tok/s  OS_RAM={os_ram}GB  GPU_Alloc={gpu_alloc:.1f}GB  GPU_InUse={gpu_in_use:.1f}GB")
             else:
                 print(f"  FAILED / OOM")
                 
@@ -373,10 +375,10 @@ def main():
     with open(args.out, "w") as f:
         f.write(f"### `{args.model}` — Context & Memory Profile\n\n")
         f.write(f"Context depths tested: {args.contexts}\n\n")
-        f.write("| Configuration | Context Size | TTFT | Generation Speed | Model Size | Active RAM (Physical) | GPU Memory Allocated |\n")
+        f.write("| Configuration | Context Size | Prefill Speed | Generation Speed | Model Size | Active RAM (Physical) | GPU Memory Allocated |\n")
         f.write("|---|---|---|---|---|---|---|\n")
         for r in results:
-            f.write(f"| {r['config']} | {r['context']} | {r['ttft']}s | {r['tps']} tok/s | {r['static_mem']} | {r['os_ram']} GB | {r['gpu_alloc']} GB |\n")
+            f.write(f"| {r['config']} | {r['context']} | {r['prefill_tps']} tok/s | {r['tps']} tok/s | {r['static_mem']} | {r['os_ram']} GB | {r['gpu_alloc']} GB |\n")
         
         f.write(f"\n> **Active RAM (Physical)**: Real memory wired into RAM by macOS (capped by device RAM).\n")
         f.write(f"> **GPU Memory Allocated**: Total memory requested by the GPU — includes data swapped to SSD. This shows the TRUE memory demand and reveals TurboQuant compression benefits even when Active RAM is saturated.\n")
@@ -410,7 +412,7 @@ class C:
     BG_MAG  = "\033[45m"
 
 CONFIG_COLORS = {
-    "Dense/Vanilla":    C.BLUE,
+    "Vanilla":    C.BLUE,
     "SSD Stream":       C.CYAN,
     "TurboQuant":       C.MAGENTA,
     "SSD + TurboQuant": C.GREEN,
@@ -437,8 +439,8 @@ def print_visualization(results, model_name, baseline_alloc):
     # Group results by context size
     ctx_sizes = sorted(set(r["context"] for r in results))
 
-    # ── 1) Generation Speed (TPS) ──
-    print(f"\n{C.BOLD}  ⚡ Generation Speed (tokens/sec) — higher is better{C.RESET}")
+    # ── 1) Decoding Speed (TPS) ──
+    print(f"\n{C.BOLD}  ⚡ Decoding Speed (tokens/sec) — higher is better{C.RESET}")
     print(f"{C.DIM}  {'─' * (W - 4)}{C.RESET}")
     
     all_tps = [float(r["tps"]) for r in results if r["tps"] != "N/A"]
@@ -459,25 +461,25 @@ def print_visualization(results, model_name, baseline_alloc):
             crown = f" {C.YELLOW}★{C.RESET}" if tps_val == best_in_ctx and len(ctx_results) > 1 else ""
             print(f"{label} {b} {val_str}{crown}")
 
-    # ── 2) Time to First Token (TTFT) ──
-    print(f"\n{C.BOLD}  ⏱  Time to First Token (seconds) — lower is better{C.RESET}")
+    # ── 2) Prefill Speed (tok/s) ──
+    print(f"\n{C.BOLD}  🚀 Prefill Speed (tokens/sec) — higher is better{C.RESET}")
     print(f"{C.DIM}  {'─' * (W - 4)}{C.RESET}")
     
-    all_ttft = [float(r["ttft"]) for r in results if r["ttft"] != "N/A"]
-    max_ttft = max(all_ttft) if all_ttft else 1
+    all_prefill = [float(r["prefill_tps"]) for r in results if r.get("prefill_tps", "N/A") != "N/A"]
+    max_prefill = max(all_prefill) if all_prefill else 1
 
     for ctx in ctx_sizes:
         ctx_results = [r for r in results if r["context"] == ctx]
         ctx_label = f"{ctx:,} tokens"
         print(f"\n  {C.BOLD}{C.WHITE}{ctx_label}{C.RESET}")
         for r in ctx_results:
-            ttft_val = float(r["ttft"])
+            pf_val = float(r.get("prefill_tps", 0))
             color = CONFIG_COLORS.get(r["config"], "")
             label = f"    {r['config']:<20}"
-            b = bar(ttft_val, max_ttft, width=28, color=color)
-            val_str = f"{C.BOLD}{ttft_val:>7.2f}{C.RESET}s"
-            best_in_ctx = min(float(x["ttft"]) for x in ctx_results)
-            crown = f" {C.YELLOW}★{C.RESET}" if ttft_val == best_in_ctx and len(ctx_results) > 1 else ""
+            b = bar(pf_val, max_prefill, width=28, color=color)
+            val_str = f"{C.BOLD}{pf_val:>6.0f}{C.RESET} tok/s"
+            best_in_ctx = max([float(x.get("prefill_tps", 0)) for x in ctx_results] + [1])
+            crown = f" {C.YELLOW}★{C.RESET}" if pf_val == best_in_ctx and pf_val > 1 and len(ctx_results) > 1 else ""
             print(f"{label} {b} {val_str}{crown}")
 
     # ── 3) GPU Memory Demand ──

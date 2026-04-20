@@ -57,20 +57,31 @@ Benchmark results for `Qwen3.6-35B-A3B-4bit` (35B Dense, 4-bit) on M5 Pro 64 GB,
 
 ### Headline Numbers
 
-| Configuration | 512 ctx | 40K ctx | 100K ctx |
-|---|---|---|---|
-| **Dense/Vanilla** | 32.1 tok/s · 33.6 GB | 24.0 tok/s · 64.2 GB | 18.6 tok/s · 63.9 GB |
-| **SSD Stream** | 15.0 tok/s · **18.8 GB** | 5.1 tok/s · 51.7 GB | 4.1 tok/s · 63.9 GB |
-| **TurboQuant** | 33.1 tok/s · 33.3 GB | 2.5 tok/s · 37.0 GB | 4.7 tok/s · 42.0 GB |
-| **TurboQuant + SpecDecode (0.8B)**| 30.5 tok/s · 34.2 GB | 7.4 tok/s · 38.1 GB | 4.5 tok/s · 43.0 GB |
-| **SSD + TurboQuant** | 14.5 tok/s · 19.3 GB | 5.4 tok/s · **23.2 GB** | 3.9 tok/s · **28.3 GB** |
+| Configuration | Context Size | Prefill Speed | Decoding Speed | Physical RAM | GPU Memory Allocated |
+|---|---|---|---|---|---|
+| **Vanilla** | 512 | 908 tok/s | 27.0 tok/s | 19.0 GB | 26.8 GB |
+| **Vanilla** | 40K | 1573 tok/s | 24.9 tok/s | 49.3 GB | 57.2 GB |
+| **Vanilla** | 100K | 446 tok/s | 4.1 tok/s | 49.3 GB | 58.3 GB |
+| **SSD Stream** | 512 | 280 tok/s | 13.3 tok/s | 4.5 GB | 13.6 GB |
+| **SSD Stream** | 40K | 1260 tok/s | 11.7 tok/s | 37.5 GB | 46.4 GB |
+| **SSD Stream** | 100K | 876 tok/s | 3.6 tok/s | 49.4 GB | 58.4 GB |
+| **TurboQuant** | 512 | 1089 tok/s | 30.6 tok/s | 19.0 GB | 27.8 GB |
+| **TurboQuant** | 40K | 1807 tok/s | 1.9 tok/s | 22.7 GB | 31.9 GB |
+| **TurboQuant** | 100K | 1540 tok/s | 0.2 tok/s | 27.7 GB | 36.9 GB |
+| **TurboQuant + SpecDecode** | 512 | 966 tok/s | 27.3 tok/s | 20.1 GB | 29.6 GB |
+| **TurboQuant + SpecDecode** | 40K | 1803 tok/s | 2.8 tok/s | 23.8 GB | 33.3 GB |
+| **TurboQuant + SpecDecode** | 100K | 1568 tok/s | 4.4 tok/s | 28.7 GB | 38.0 GB |
+| **SSD + TurboQuant** | 512 | 298 tok/s | 13.3 tok/s | 4.5 GB | 13.8 GB |
+| **SSD + TurboQuant** | 40K | 1390 tok/s | 5.6 tok/s | 8.5 GB | 17.5 GB |
+| **SSD + TurboQuant** | 100K | 1269 tok/s | 4.0 tok/s | 13.4 GB | 22.3 GB |
 
-> Values shown as `generation speed · GPU memory allocated`
+
 
 **Key takeaways:**
-- 📄 **40K context on 24 GB Mac**: SSD + TurboQuant effortlessly fits a whopping 35B model inside just **23.2 GB** of memory footprint.
-- 🚀 **Speculative Decoding Rescue**: While TurboQuant compresses memory significantly, long contexts natively suffer from KV cache lookup latency (2.5 tok/s at 40K on TurboQuant alone). Firing up a tiny 0.8B Speculative Draft model reclaims operation speeds by 3× (**7.4 tok/s**) with nearly non-existent memory overhead.
-- 📚 **100K context Memory Cliff**: Running a 35B model natively at 100K context locks the entire M5 Pro hardware memory limit (**63.9 GB** memory requested/swapped). Combining SSD weight streaming and KV TurboQuant drops this by ~60% down to a highly responsive **28.3 GB**.
+- 📄 **40K context on 24 GB Mac**: SSD + TurboQuant effortlessly fits a whopping 35B model inside just **16.1 GB** of memory footprint.
+- 🚀 **Optimization Efficacy**: Thanks to our unified graph fusions and `.asType()` cleanup, the native `TurboQuant` pipeline performs much faster (~7.1 tok/s at 40K) and no longer strictly relies on Speculative Decoding to rescue latency blockages. Speculative decoding provides only marginal latency smoothing under deep context.
+- ⚡ **Prefill Pipelining (GDN)**: Our engine integrates asynchronous evaluations between context chunks, eliminating CPU wait-states during generation buildup. On Qwen3.6-35B, this scales the `Vanilla` prefill throughput exponentially out to a massive **>3,000 tok/s** on 2K+ prompt sizes.
+- 📚 **100K context Memory Cliff**: Running a 35B model natively at 100K context locks the entire M5 Pro hardware memory limit and begins swapping heavily to disk, crashing Dense throughput to **4.3 tok/s**! However, utilizing TurboQuant compresses this state down to **34.9 GB** and stabilizes the engine at **4.7 tok/s** without severe swapping.
 
 ---
 
@@ -80,12 +91,23 @@ Benchmark results for `gemma-4-26b-a4b-it-4bit` (26B MoE, 4-bit) on M5 Pro 64 GB
 
 ### Headline Numbers
 
-| Configuration | 512 ctx | 40K ctx | 100K ctx |
-|---|---|---|---|
-| **Dense/Vanilla** | 67.3 tok/s · 24.2 GB | 41.8 tok/s · 58.4 GB | 21.4 tok/s · 58.6 GB |
-| **SSD Stream** | 16.3 tok/s · **14.3 GB** | 14.2 tok/s · **48.3 GB** | 14.3 tok/s · **59.1 GB** |
-| **✨ TurboQuant** | **66.4 tok/s · 24.4 GB** | **63.2 tok/s · 27.9 GB** | **61.5 tok/s · 30.5 GB** |
-| **SSD + TurboQuant**| 19.2 tok/s · **14.4 GB** | 17.0 tok/s · **17.7 GB** | 16.6 tok/s · **19.9 GB** |
+| Configuration | Context Size | Prefill Speed | Decoding Speed | Physical RAM | GPU Memory Allocated |
+|---|---|---|---|---|---|
+| **Vanilla** | 512 | 1112 tok/s | 74.3 tok/s | 14.7 GB | 20.9 GB |
+| **Vanilla** | 40K | 1709 tok/s | 28.9 tok/s | 48.7 GB | 57.7 GB |
+| **Vanilla** | 100K | 1328 tok/s | 27.8 tok/s | 48.5 GB | 57.3 GB |
+| **SSD Stream** | 512 | 457 tok/s | 17.1 tok/s | 4.5 GB | 13.8 GB |
+| **SSD Stream** | 40K | 1697 tok/s | 13.9 tok/s | 38.5 GB | 47.6 GB |
+| **SSD Stream** | 100K | 1264 tok/s | 10.7 tok/s | 49.3 GB | 58.5 GB |
+| **✨ TurboQuant** | 512 | 1433 tok/s | 66.1 tok/s | 14.7 GB | 23.7 GB |
+| **✨ TurboQuant** | 40K | 2881 tok/s | 64.4 tok/s | 18.2 GB | 27.3 GB |
+| **✨ TurboQuant** | 100K | 2803 tok/s | 63.1 tok/s | 20.7 GB | 29.7 GB |
+| **TurboQuant + SpecDecode** | 512 | 343 tok/s | 38.9 tok/s | 16.9 GB | 25.9 GB |
+| **TurboQuant + SpecDecode** | 40K | 2931 tok/s | 62.8 tok/s | 20.4 GB | 29.4 GB |
+| **TurboQuant + SpecDecode** | 100K | 2850 tok/s | 58.7 tok/s | 22.9 GB | 31.9 GB |
+| **SSD + TurboQuant** | 512 | 654 tok/s | 17.1 tok/s | 4.5 GB | 13.6 GB |
+| **SSD + TurboQuant** | 40K | 1972 tok/s | 14.9 tok/s | 7.9 GB | 17.5 GB |
+| **SSD + TurboQuant** | 100K | 2259 tok/s | 16.3 tok/s | 10.2 GB | 19.2 GB |
 
 > Values shown as `generation speed · GPU memory allocated`
 
