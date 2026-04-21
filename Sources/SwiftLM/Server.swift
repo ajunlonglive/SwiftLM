@@ -401,7 +401,7 @@ struct MLXServer: AsyncParsableCommand {
             .appendingPathComponent("HuggingFace", isDirectory: true)
         let hub = HubApi(downloadBase: cacheRoot)
         let downloader = HubDownloader(hub: hub)
-        let architecture = try await ModelArchitectureProbe.inspect(
+        _ = try await ModelArchitectureProbe.inspect(
             configuration: modelConfig,
             downloader: downloader
         )
