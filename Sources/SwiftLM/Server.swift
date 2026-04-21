@@ -1598,8 +1598,10 @@ func handleChatStreaming(
                                             content: c.isEmpty ? nil : c, finishReason: nil))
                     }
                     cont.yield(sseChunk(modelId: modelId, reasoningContent: nil, content: nil, finishReason: "stop"))
+                    let genDur = Date().timeIntervalSince(genStart)
+                    let genTokPerSec = genDur > 0 ? Double(completionTokenCount) / genDur : 0
                     if includeUsage {
-                        cont.yield(sseUsageChunk(modelId: modelId, promptTokens: promptTokenCount, completionTokens: completionTokenCount))
+                        cont.yield(sseUsageChunk(modelId: modelId, promptTokens: promptTokenCount, completionTokens: completionTokenCount, tokPerSec: genTokPerSec, durationMs: genDur * 1000))
                     }
                     cont.yield("data: [DONE]\r\n\r\n")
                     cont.finish()
@@ -1637,8 +1639,10 @@ func handleChatStreaming(
                         reason = hasToolCalls ? "tool_calls" : "stop"
                     }
                     cont.yield(sseChunk(modelId: modelId, reasoningContent: nil, content: nil, finishReason: reason))
+                    let genDur = Date().timeIntervalSince(genStart)
+                    let genTokPerSec = genDur > 0 ? Double(completionTokenCount) / genDur : 0
                     if includeUsage {
-                        cont.yield(sseUsageChunk(modelId: modelId, promptTokens: promptTokenCount, completionTokens: completionTokenCount))
+                        cont.yield(sseUsageChunk(modelId: modelId, promptTokens: promptTokenCount, completionTokens: completionTokenCount, tokPerSec: genTokPerSec, durationMs: genDur * 1000))
                     }
                     cont.yield("data: [DONE]\r\n\r\n")
                     cont.finish()
@@ -1646,8 +1650,8 @@ func handleChatStreaming(
                     print("")  // end the real-time token stream line
                     let postMemSnap = MemoryUtils.snapshot()
                     print("srv  slot done: id 0 | gen_tokens=\(completionTokenCount) | OS_RAM=\(String(format: "%.1f", postMemSnap.os))GB | MEM_DEMAND=\(String(format: "%.1f", postMemSnap.demand))GB | GPU_MEM=\(String(format: "%.1f", postMemSnap.gpu))GB")
-                    let dur = Date().timeIntervalSince(genStart)
-                    let tokPerSec = dur > 0 ? Double(completionTokenCount) / dur : 0
+                    let dur = genDur
+                    let tokPerSec = genTokPerSec
                     let logContent: Any = hasToolCalls ? NSNull() : fullText
                     let logResp: [String: Any] = [
                         "choices": [[
@@ -1797,7 +1801,12 @@ func handleChatNonStreaming(
                 finishReason: hasToolCalls ? "tool_calls" : finishReason
             )
         ],
-        usage: TokenUsage(promptTokens: promptTokenCount, completionTokens: completionTokenCount, totalTokens: totalTokens)
+        usage: TokenUsage(promptTokens: promptTokenCount, completionTokens: completionTokenCount, totalTokens: totalTokens),
+        timings: ChatCompletionResponse.Timings(
+            predictedPerSecond: duration > 0 ? Double(completionTokenCount) / duration : 0,
+            predictedN: completionTokenCount,
+            predictedMs: duration * 1000
+        )
     )
     let encoded = try JSONEncoder().encode(resp)
     // llama-server style: log full response JSON on one line
@@ -2003,7 +2012,12 @@ func handleTextNonStreaming(
         choices: [
             TextChoice(index: 0, text: fullText, finishReason: finishReason)
         ],
-        usage: TokenUsage(promptTokens: promptTokenCount, completionTokens: completionTokenCount, totalTokens: totalTokens)
+        usage: TokenUsage(promptTokens: promptTokenCount, completionTokens: completionTokenCount, totalTokens: totalTokens),
+        timings: ChatCompletionResponse.Timings(
+            predictedPerSecond: duration > 0 ? Double(completionTokenCount) / duration : 0,
+            predictedN: completionTokenCount,
+            predictedMs: duration * 1000
+        )
     )
     let encoded = try JSONEncoder().encode(resp)
     return Response(
@@ -2198,18 +2212,26 @@ func ssePrefillChunk(modelId: String, nPast: Int = 0, promptTokens: Int, elapsed
     return "data: \(String(data: data, encoding: .utf8)!)\r\n\r\n"
 }
 
-func sseUsageChunk(modelId: String, promptTokens: Int, completionTokens: Int) -> String {
+func sseUsageChunk(modelId: String, promptTokens: Int, completionTokens: Int, tokPerSec: Double? = nil, durationMs: Double? = nil) -> String {
+    var usage: [String: Any] = [
+        "prompt_tokens": promptTokens,
+        "completion_tokens": completionTokens,
+        "total_tokens": promptTokens + completionTokens
+    ]
+    if let tokPerSec, let durationMs {
+        usage["timings"] = [
+            "predicted_per_second": tokPerSec,
+            "predicted_n": completionTokens,
+            "predicted_ms": durationMs
+        ]
+    }
     let chunk: [String: Any] = [
         "id": "chatcmpl-\(UUID().uuidString)",
         "object": "chat.completion.chunk",
         "created": Int(Date().timeIntervalSince1970),
         "model": modelId,
         "choices": [] as [[String: Any]],
-        "usage": [
-            "prompt_tokens": promptTokens,
-            "completion_tokens": completionTokens,
-            "total_tokens": promptTokens + completionTokens
-        ]
+        "usage": usage
     ]
     let data = try! JSONSerialization.data(withJSONObject: chunk)
     return "data: \(String(data: data, encoding: .utf8)!)\r\n\r\n"
@@ -2469,6 +2491,19 @@ struct ChatCompletionResponse: Encodable {
     let created: Int
     let choices: [Choice]
     let usage: TokenUsage
+    let timings: Timings?
+
+    struct Timings: Encodable {
+        let predictedPerSecond: Double
+        let predictedN: Int
+        let predictedMs: Double
+
+        enum CodingKeys: String, CodingKey {
+            case predictedPerSecond = "predicted_per_second"
+            case predictedN = "predicted_n"
+            case predictedMs = "predicted_ms"
+        }
+    }
 }
 
 struct Choice: Encodable {
@@ -2522,6 +2557,7 @@ struct TextCompletionResponse: Encodable {
     let created: Int
     let choices: [TextChoice]
     let usage: TokenUsage
+    let timings: ChatCompletionResponse.Timings?
 }
 
 struct TextChoice: Encodable {
