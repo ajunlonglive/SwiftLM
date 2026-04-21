@@ -244,26 +244,29 @@ public enum DFlashRuntime {
         draftSinkSize: Int = 64,
         draftWindowSize: Int = 1024
     ) -> AsyncStream<DFlashEvent> {
-        // Run generateSync once and buffer all events, then yield them one at a time
-        let events = generateSync(
-            targetModel: targetModel,
-            draftModel: draftModel,
-            promptTokens: promptTokens,
-            maxNewTokens: maxNewTokens,
-            blockTokens: blockTokens,
-            stopTokenIDs: stopTokenIDs,
-            suppressTokenIDs: suppressTokenIDs,
-            draftSinkSize: draftSinkSize,
-            draftWindowSize: draftWindowSize
-        )
-        var iterator = events.makeIterator()
-        return AsyncStream(unfolding: {
-            iterator.next()
-        })
+        // Streaming: yield events from inside the generation loop
+        // via a Continuation, avoiding the buffered-array bottleneck.
+        AsyncStream(bufferingPolicy: .unbounded) { continuation in
+            generateStreaming(
+                targetModel: targetModel,
+                draftModel: draftModel,
+                promptTokens: promptTokens,
+                maxNewTokens: maxNewTokens,
+                blockTokens: blockTokens,
+                stopTokenIDs: stopTokenIDs,
+                suppressTokenIDs: suppressTokenIDs,
+                draftSinkSize: draftSinkSize,
+                draftWindowSize: draftWindowSize,
+                yield: { event in
+                    continuation.yield(event)
+                }
+            )
+            continuation.finish()
+        }
     }
 
     /// Synchronous generation that returns all events at once.
-    /// Used internally by the async generator.
+    /// Kept for backward compatibility — delegates to the streaming implementation.
     public static func generateSync(
         targetModel: any DFlashTargetModel,
         draftModel: DFlashDraftModel,
@@ -276,9 +279,38 @@ public enum DFlashRuntime {
         draftWindowSize: Int = 1024
     ) -> [DFlashEvent] {
         var events: [DFlashEvent] = []
+        generateStreaming(
+            targetModel: targetModel,
+            draftModel: draftModel,
+            promptTokens: promptTokens,
+            maxNewTokens: maxNewTokens,
+            blockTokens: blockTokens,
+            stopTokenIDs: stopTokenIDs,
+            suppressTokenIDs: suppressTokenIDs,
+            draftSinkSize: draftSinkSize,
+            draftWindowSize: draftWindowSize,
+            yield: { events.append($0) }
+        )
+        return events
+    }
 
+    /// Core streaming generation loop. Takes a yield closure so it can be
+    /// used both from the async `generate()` (via Continuation) and the
+    /// synchronous `generateSync()` (buffering into an array).
+    private static func generateStreaming(
+        targetModel: any DFlashTargetModel,
+        draftModel: DFlashDraftModel,
+        promptTokens: [Int],
+        maxNewTokens: Int,
+        blockTokens: Int?,
+        stopTokenIDs: [Int],
+        suppressTokenIDs: [Int]?,
+        draftSinkSize: Int,
+        draftWindowSize: Int,
+        yield: (DFlashEvent) -> Void
+    ) {
         let promptLen = promptTokens.count
-        guard promptLen > 0 && maxNewTokens > 0 else { return events }
+        guard promptLen > 0 && maxNewTokens > 0 else { return }
 
         let promptArray = MLXArray(promptTokens.map { Int32($0) }).reshaped(1, -1).asType(.uint32)
 
@@ -318,8 +350,9 @@ public enum DFlashRuntime {
                 captureLayerIDs: captureLayerIDs
             )
 
-            eval(chunkLogits)
-            for (_, v) in chunkHidden { eval(v) }
+            // Batched asyncEval: enqueue everything without blocking
+            asyncEval(chunkLogits)
+            for (_, v) in chunkHidden { asyncEval(v) }
 
             let feat = extractContextFeatureFromDict(
                 capturedDict: chunkHidden,
@@ -337,10 +370,12 @@ public enum DFlashRuntime {
 
             prefillLogits = chunkLogits
 
-            DFlashDumper.save("swift_target_hidden", targetHidden!)
-            DFlashDumper.save("swift_prefill_logits", chunkLogits)
+            if DFlashDumper.isEnabled {
+                DFlashDumper.save("swift_target_hidden", targetHidden!)
+                DFlashDumper.save("swift_prefill_logits", chunkLogits)
+            }
 
-            events.append(.prefillProgress(
+            yield(.prefillProgress(
                 tokensProcessed: chunkEnd,
                 tokensTotal: promptLen
             ))
@@ -360,14 +395,14 @@ public enum DFlashRuntime {
             suppressTokenMask: suppressTokenMask
         ).reshaped(-1)
 
-        events.append(.prefill(
+        yield(.prefill(
             promptTokenCount: promptLen,
             prefillUs: Double(prefillNanos) / 1000.0
         ))
 
         // Yield the first token
         let firstTokenID = Int(stagedFirst.item(Int.self))
-        events.append(.token(
+        yield(.token(
             tokenID: firstTokenID,
             generatedTokens: 1,
             acceptanceRatio: 0.0,
@@ -378,7 +413,7 @@ public enum DFlashRuntime {
         let draftBlockSize = draftModel.blockSize
         let requestedBlockTokens = blockTokens ?? draftBlockSize
         let effectiveBlockTokens = max(1, min(requestedBlockTokens, draftBlockSize))
-        let verifyLenCap = effectiveBlockTokens  // default; env var override not implemented
+        let verifyLenCap = effectiveBlockTokens
 
         var generatedTokenIDs: [Int] = []
         var acceptedFromDraft = 0
@@ -386,7 +421,6 @@ public enum DFlashRuntime {
         var start = promptLen
         var firstTokenYielded = false
 
-        // Add the first token (from prefill) to generated list
         generatedTokenIDs.append(firstTokenID)
         firstTokenYielded = true
 
@@ -399,33 +433,47 @@ public enum DFlashRuntime {
         var draftNsTotal: Int = 0
         var replayNsTotal: Int = 0
 
+        // Precompute stop token set for O(1) lookup
+        let stopTokenSet = Set(stopTokenIDs)
+
+        // Prefetch state: the draft for the NEXT cycle can be overlapped
+        // with the current cycle's rollback.
+        var prefetchedDraft: MLXArray?
+        var prefetchedBlockLen: Int?
+
         while generatedTokenIDs.count < maxNewTokens {
             let remaining = maxNewTokens - generatedTokenIDs.count
             let blockLen = max(1, min(effectiveBlockTokens, remaining))
 
             // ── Draft Phase ──────────────────────────────────────
+            // Use prefetched draft if available and blockLen matches
             var drafted: MLXArray?
             var currentStagedFirst = stagedFirst
             if blockLen > 1 {
-                let draftStart = Int(DispatchTime.now().uptimeNanoseconds)
-                drafted = draftBackend.draftGreedy(
-                    targetModel: targetModel,
-                    draftModel: draftModel,
-                    draftCache: draftCache,
-                    stagedFirst: stagedFirst,
-                    targetHidden: targetHidden!,
-                    blockLen: blockLen,
-                    maskTokenTail: maskTokenTail,
-                    suppressTokenMask: suppressTokenMask
-                )
-                DFlashDumper.save("swift_cycle_draft", drafted ?? MLXArray())
-                draftNsTotal += Int(DispatchTime.now().uptimeNanoseconds) - draftStart
+                if let pf = prefetchedDraft, prefetchedBlockLen == blockLen {
+                    drafted = pf
+                    prefetchedDraft = nil
+                    prefetchedBlockLen = nil
+                } else {
+                    let draftStart = Int(DispatchTime.now().uptimeNanoseconds)
+                    drafted = draftBackend.draftGreedy(
+                        targetModel: targetModel,
+                        draftModel: draftModel,
+                        draftCache: draftCache,
+                        stagedFirst: stagedFirst,
+                        targetHidden: targetHidden!,
+                        blockLen: blockLen,
+                        maskTokenTail: maskTokenTail,
+                        suppressTokenMask: suppressTokenMask
+                    )
+                    draftNsTotal += Int(DispatchTime.now().uptimeNanoseconds) - draftStart
+                }
+                if DFlashDumper.isEnabled {
+                    DFlashDumper.save("swift_cycle_draft", drafted ?? MLXArray())
+                }
             }
 
             // ── Verify Phase ────────────────────────────────────
-            // Construct verify token IDs per Python reference:
-            //   verify_token_count = min(block_len, verify_len_cap)
-            //   verify_token_ids = concat([staged_first[:1], drafted[:verify_token_count-1]])
             let verifyTokenCount = min(blockLen, verifyLenCap)
             let verifyTokenIDs: MLXArray
             if blockLen <= 1 {
@@ -448,8 +496,9 @@ public enum DFlashRuntime {
                 cache: targetCache,
                 captureLayerIDs: captureLayerIDs
             )
-            eval(verifyLogits)
-            for (_, v) in verifyHiddenStates { eval(v) }
+            // Batched asyncEval: enqueue logits + all hidden states without blocking
+            asyncEval(verifyLogits)
+            for v in verifyHiddenStates.values { asyncEval(v) }
             verifyNsTotal += Int(DispatchTime.now().uptimeNanoseconds) - verifyStart
 
             // ── Accept/Reject ──────────────────────────────────
@@ -457,12 +506,12 @@ public enum DFlashRuntime {
                 logits: verifyLogits[0],
                 suppressTokenMask: suppressTokenMask
             )
-            asyncEval(posterior)
-            DFlashDumper.save("swift_cycle_posterior", posterior)
-            DFlashDumper.saveInt("swift_cycle_verifyIDs", verifyTokenIDs)
+            // Don't asyncEval(posterior) here — we need .item() immediately below
+            if DFlashDumper.isEnabled {
+                DFlashDumper.save("swift_cycle_posterior", posterior)
+                DFlashDumper.saveInt("swift_cycle_verifyIDs", verifyTokenIDs)
+            }
 
-            // Acceptance: compare drafted tokens (positions 1+) against
-            // posterior tokens at positions 0..<n-1
             let acceptanceLen: Int
             if verifyTokenIDs.dim(0) > 1 {
                 acceptanceLen = Int(
@@ -476,16 +525,39 @@ public enum DFlashRuntime {
             }
             print("[DFlash] Cycle \(cyclesCompleted + 1): blockLen=\(blockLen), verifyLen=\(verifyTokenIDs.dim(0)), acceptanceLen=\(acceptanceLen), commitCount=\(1 + acceptanceLen)")
             fflush(stdout)
-            fflush(stdout)
 
             let committedHidden = extractContextFeatureFromDict(
                 capturedDict: verifyHiddenStates,
                 targetLayerIDs: targetLayerIDList
             )[0..., ..<(1 + acceptanceLen), 0...]
-            eval(committedHidden)
+            // asyncEval: don't block — prefetch + rollback can overlap
+            asyncEval(committedHidden)
 
             let commitCount = 1 + acceptanceLen
             let committedSegment = verifyTokenIDs[..<(commitCount)]
+
+            let stagedFirstNext = posterior[acceptanceLen ..< (acceptanceLen + 1)]
+
+            // ── Prefetch next draft (overlaps with rollback on GPU) ──
+            let nextRemaining = maxNewTokens - generatedTokenIDs.count - commitCount
+            let nextBlockLen = max(1, min(effectiveBlockTokens, nextRemaining))
+            if nextBlockLen > 1 && generatedTokenIDs.count + commitCount < maxNewTokens {
+                prefetchedDraft = draftBackend.draftGreedy(
+                    targetModel: targetModel,
+                    draftModel: draftModel,
+                    draftCache: draftCache,
+                    stagedFirst: stagedFirstNext,
+                    targetHidden: committedHidden,
+                    blockLen: nextBlockLen,
+                    maskTokenTail: maskTokenTail,
+                    suppressTokenMask: suppressTokenMask
+                )
+                prefetchedBlockLen = nextBlockLen
+                asyncEval(prefetchedDraft!)
+            } else {
+                prefetchedDraft = nil
+                prefetchedBlockLen = nil
+            }
 
             // ── Rollback ───────────────────────────────────────
             start += commitCount
@@ -500,15 +572,12 @@ public enum DFlashRuntime {
             cyclesCompleted += 1
             acceptedFromDraft += acceptanceLen
 
-            let stagedFirstNext = posterior[acceptanceLen ..< (acceptanceLen + 1)]
-
             // ── Emit tokens ───────────────────────────────────
             let committedIDs = committedSegment.asArray(Int.self)
             for tokenID in committedIDs {
                 guard generatedTokenIDs.count < maxNewTokens else { break }
                 generatedTokenIDs.append(tokenID)
 
-                // Skip the first token (already yielded during prefill)
                 if firstTokenYielded {
                     firstTokenYielded = false
                     continue
@@ -517,7 +586,7 @@ public enum DFlashRuntime {
                 let acceptanceRatio = generatedTokenIDs.count > 0
                     ? Double(acceptedFromDraft) / Double(generatedTokenIDs.count)
                     : 0.0
-                events.append(.token(
+                yield(.token(
                     tokenID: tokenID,
                     generatedTokens: generatedTokenIDs.count,
                     acceptanceRatio: acceptanceRatio,
@@ -525,10 +594,8 @@ public enum DFlashRuntime {
                 ))
             }
 
-            // Check for stop tokens
-            let hit = committedIDs.contains { id in
-                stopTokenIDs.contains(id)
-            }
+            // Check for stop tokens (O(1) via Set)
+            let hit = committedIDs.contains { stopTokenSet.contains($0) }
             if hit { break }
 
             stagedFirst = stagedFirstNext
@@ -540,7 +607,7 @@ public enum DFlashRuntime {
             ? Double(acceptedFromDraft) / Double(generatedTokenIDs.count)
             : 0.0
 
-        events.append(.summary(DFlashSummary(
+        yield(.summary(DFlashSummary(
             elapsedUs: Double(elapsedNanos) / 1000.0,
             promptTokenCount: promptLen,
             generatedTokenIDs: generatedTokenIDs,
@@ -555,7 +622,5 @@ public enum DFlashRuntime {
                 replay: Double(replayNsTotal) / 1000.0
             )
         )))
-
-        return events
     }
 }

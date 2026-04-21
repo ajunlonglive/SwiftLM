@@ -56,8 +56,10 @@ public final class DFlashDraftBackend: @unchecked Sendable {
 
         // Get noise embedding from target model's embed_tokens
         let noiseEmbedding = targetModel.dflashEmbedTokens(blockTokenIDs[.newAxis])
-        DFlashDumper.saveInt("swift_block_token_ids", blockTokenIDs[.newAxis])
-        DFlashDumper.save("swift_noise_embedding", noiseEmbedding)
+        if DFlashDumper.isEnabled {
+            DFlashDumper.saveInt("swift_block_token_ids", blockTokenIDs[.newAxis])
+            DFlashDumper.save("swift_noise_embedding", noiseEmbedding)
+        }
 
         // Run the draft model
         let draftHidden = draftModel(
@@ -65,13 +67,17 @@ public final class DFlashDraftBackend: @unchecked Sendable {
             targetHidden: targetHidden,
             cache: draftCache
         )
-        DFlashDumper.save("swift_draft_hidden", draftHidden)
+        if DFlashDumper.isEnabled {
+            DFlashDumper.save("swift_draft_hidden", draftHidden)
+        }
 
         // Get draft logits via the target model's lm_head
         let draftLogits = targetModel.dflashLmHeadLogits(
             draftHidden[.ellipsis, 1..., 0...]
         )
-        DFlashDumper.save("swift_draft_logits", draftLogits)
+        if DFlashDumper.isEnabled {
+            DFlashDumper.save("swift_draft_logits", draftLogits)
+        }
 
         // Greedy decode
         let drafted = DFlashRuntime.greedyTokensWithMask(

@@ -344,10 +344,14 @@ public final class DFlashDraftModel: Module {
     }
 
     func projectTargetHidden(_ targetHidden: MLXArray) -> MLXArray {
-        DFlashDumper.save("swift_fc_weight", fc.weight)
-        DFlashDumper.save("swift_fc_bias", fc.bias ?? MLXArray.zeros([0]))
+        if DFlashDumper.isEnabled {
+            DFlashDumper.save("swift_fc_weight", fc.weight)
+            DFlashDumper.save("swift_fc_bias", fc.bias ?? MLXArray.zeros([0]))
+        }
         let fcOut = fc(targetHidden)
-        DFlashDumper.save("swift_fc_output", fcOut)
+        if DFlashDumper.isEnabled {
+            DFlashDumper.save("swift_fc_output", fcOut)
+        }
         let result = hiddenNorm(fcOut)
         DFlashDumper.save("swift_projected_hidden", result)
         return result
@@ -359,7 +363,9 @@ public final class DFlashDraftModel: Module {
         cache: [ContextOnlyDraftKVCache]? = nil
     ) -> MLXArray {
         var hiddenStates = noiseEmbedding
-        DFlashDumper.save("swift_target_hidden_input", targetHidden)
+        if DFlashDumper.isEnabled {
+            DFlashDumper.save("swift_target_hidden_input", targetHidden)
+        }
         let projectedHidden = projectTargetHidden(targetHidden)
 
         let draftCache = cache ?? layers.map { _ in
@@ -372,10 +378,14 @@ public final class DFlashDraftModel: Module {
                 targetHidden: projectedHidden,
                 cache: i < draftCache.count ? draftCache[i] : nil
             )
-            DFlashDumper.save("swift_draft_layer\(i)_output", hiddenStates)
+            if DFlashDumper.isEnabled {
+                DFlashDumper.save("swift_draft_layer\(i)_output", hiddenStates)
+            }
         }
         let result = norm(hiddenStates)
-        DFlashDumper.save("swift_draft_final_normed", result)
+        if DFlashDumper.isEnabled {
+            DFlashDumper.save("swift_draft_final_normed", result)
+        }
         return result
     }
 
