@@ -982,8 +982,9 @@ else
     pass "Strict mode: no named SSE events in default streaming"
 fi
 
+# Test 32 cont'd — must guard with || true because grep exits 1 on no-match under set -e
 if [ -n "$STRICT_STREAM" ]; then
-    if echo "$STRICT_STREAM" | grep -q '"prefill_progress"'; then
+    if echo "$STRICT_STREAM" | grep -q '"prefill_progress"' 2>/dev/null || false; then
         fail "Strict mode: prefill_progress payload leaked into default stream"
     else
         pass "Strict mode: no prefill_progress object in default stream"
@@ -1005,27 +1006,29 @@ else
     OPTIN_STREAM=""
 fi
 
-if [ -n "$OPTIN_STREAM" ] && echo "$OPTIN_STREAM" | grep -q "^event: prefill_progress"; then
-    pass "Opt-in: named prefill_progress event received"
-elif [ -n "$OPTIN_STREAM" ] && echo "$OPTIN_STREAM" | grep -Fq "data: [DONE]"; then
-    log "  ⚠️  WARN: no heartbeat (prompt may have been too short for 2s window)"
-    pass "Opt-in: header accepted without error (heartbeat timing not guaranteed in CI)"
-elif [ -n "$OPTIN_STREAM" ]; then
-    fail "Opt-in: stream did not complete successfully (missing [DONE])"
+if [ -n "$OPTIN_STREAM" ]; then
+    if echo "$OPTIN_STREAM" | grep -q "^event: prefill_progress" 2>/dev/null; then
+        pass "Opt-in: named prefill_progress event received"
+    elif echo "$OPTIN_STREAM" | grep -Fq "data: [DONE]" 2>/dev/null; then
+        log "  ⚠️  WARN: no heartbeat (prompt may have been too short for 2s window)"
+        pass "Opt-in: header accepted without error (heartbeat timing not guaranteed in CI)"
+    else
+        fail "Opt-in: stream did not complete successfully (missing [DONE])"
+    fi
 fi
 
-EVENT_DATA=$(echo "$OPTIN_STREAM" | grep -A1 "^event: prefill_progress" | grep "^data:" | head -1 | sed 's/^data: //')
+# Guard jq/grep pipelines with || true to avoid set -e abort on no-match
+EVENT_DATA=$(echo "$OPTIN_STREAM" | grep -A1 "^event: prefill_progress" | grep "^data:" | head -1 | sed 's/^data: //' || true)
 if [ -n "$EVENT_DATA" ]; then
     if echo "$EVENT_DATA" | jq -e '.n_prompt_tokens' >/dev/null 2>&1; then
         pass "Opt-in: prefill_progress data has n_prompt_tokens"
     else
         fail "Opt-in: prefill_progress data missing n_prompt_tokens"
     fi
-    
-    if ! echo "$EVENT_DATA" | jq -e '.choices' >/dev/null 2>&1; then
-        pass "Opt-in: prefill_progress data has no .choices (strict payload)"
-    else
+    if echo "$EVENT_DATA" | jq -e '.choices' >/dev/null 2>&1; then
         fail "Opt-in: prefill_progress data has .choices (not lean)"
+    else
+        pass "Opt-in: prefill_progress data has no .choices (strict payload)"
     fi
 fi
 
