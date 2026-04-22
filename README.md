@@ -108,7 +108,7 @@ Benchmark results for `gemma-4-26b-a4b-it-4bit` (26B MoE, 4-bit) on M5 Pro 64 GB
 | **Phi 3 / Phi** | `Phi-3`, `Phi-3.5-mini` | 128k context via chunked prefill |
 | **Mistral / Mixtral** | `Mistral-7B`, `Mistral-4`, `Mixtral-*` | GQA + sliding window variants |
 | **Llama / Llama 3** | `Llama-3.1-*`, `Llama-3.2-*`, `Llama-3.3-*` | YaRN + dynamic NTK RoPE scaling |
-| **GLM 4 / GLM 5.1** | `GLM-4-*`, `GLM-5.1-RAM-270GB`, `GLM-5.1-4bit` | Dense + MoE-Lite variants |
+| **GLM 4** | `GLM-4-*` | THUDM GLM-4 dense + MoE-Lite variants |
 | **DeepSeek V3** | `DeepSeek-V3-*` | MLA attention architecture |
 | **Falcon H1** | `Falcon-H1-*` | Falcon hybrid SSM+attention |
 | **LFM 2** | `LFM2-*`, `LFM2-MoE-*` | Liquid AI dense + MoE |
