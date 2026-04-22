@@ -946,7 +946,24 @@ actor PromptCache {
     /// If not materialized now, those lazy references point to the live cache tensors
     /// which get overwritten by subsequent requests, causing stale data / SIGTRAP on restore.
     func save(tokens: [Int], cache: [KVCache]) {
-        let states = cache.map { $0.state }
+        let P = tokens.count
+        // For attention KVCacheSimple layers, the state tensor is [B, H, T, D] with a
+        // pre-allocated T that can exceed the actual prompt length P. If we store the
+        // full over-sized buffer, restore()'s trim() by (cached.tokens.count - matchLen)
+        // still leaves T - P slots of garbage beyond the valid prefix. Slice T to P at
+        // save time so cached.tokens.count === cached state's T.
+        let states: [[MLXArray]] = cache.map { layer -> [MLXArray] in
+            let s = layer.state
+            if layer is KVCacheSimple {
+                return s.map { arr -> MLXArray in
+                    guard arr.ndim >= 3 else { return arr }
+                    let T = arr.dim(2)
+                    if T > P { return arr[.ellipsis, ..<P, 0...] }
+                    return arr
+                }
+            }
+            return s
+        }
         let metaStates = cache.map { $0.metaState }
         // Materialize all lazy MLX arrays so they survive cache mutations
         let allArrays = states.flatMap { $0 }
@@ -961,6 +978,20 @@ actor PromptCache {
     /// Returns the number of matched tokens, or nil on a complete miss.
     func restore(newTokens: [Int], into cache: [KVCache]) -> Int? {
         guard let cached, !cached.tokens.isEmpty else {
+            misses += 1
+            return nil
+        }
+        // ── Recurrent-layer safety gate ──
+        // MambaCache (and other recurrent caches) store a 2-D hidden state with no
+        // T dimension, so the dim(2) read below would crash. Hybrid Mamba/attention
+        // models (Qwen-Next, Mamba-2, etc.) can't be safely prefix-restored because
+        // the recurrent hidden state was computed over the WHOLE previous sequence
+        // and there is no trim(excess) operator for it. Treat any cache containing
+        // a recurrent layer as a miss before we touch anything.
+        let hasRecurrentLayer = cache.contains { layer in
+            !(layer is KVCacheSimple) && !(String(describing: type(of: layer)).contains("Rotating"))
+        }
+        if hasRecurrentLayer {
             misses += 1
             return nil
         }
@@ -984,6 +1015,7 @@ actor PromptCache {
             // dim(2) = T = the number of cached tokens for that layer.
             let minCachedSeqLen = cached.states.map { arrays -> Int in
                 guard let firstArray = arrays.first else { return 0 }
+                guard firstArray.ndim >= 3 else { return 0 }
                 return firstArray.dim(2)  // T dimension
             }.min() ?? 0
             if excess >= minCachedSeqLen {
@@ -1200,9 +1232,20 @@ func handleChatCompletion(
         // raw <|image|>/<|audio|> token embeddings instead of the projected features.
         let isMultimodalRequest = lmInput.image != nil || lmInput.audio != nil
 
-        // Try to restore via token-by-token prefix match (llama-server style)
+        // ── Decision branch ──
+        // Speculative decoding is CHECKED FIRST because a cache-hit rollback
+        // corrupts the draft model's KV state (draft and main model cycle tokens
+        // in lock-step). We'd rather pay the prefill than emit garbage.
         var stream: AsyncStream<Generation>
-        if !isMultimodalRequest, let cachedCount = await promptCache.restore(newTokens: promptTokens, into: cache) {
+        if let draftRef = draftModelRef {
+            // Speculative decoding path: draft model generates candidates, main model verifies.
+            // Bypass prompt cache to avoid draft/main KV drift on partial-match restores.
+            print("[SwiftLM] Using speculative decoding (\(numDraftTokens) draft tokens/round)")
+            stream = try MLXLMCommon.generate(
+                input: lmInput, cache: cache, parameters: params, context: context,
+                draftModel: draftRef.model, numDraftTokens: numDraftTokens
+            )
+        } else if !isMultimodalRequest, let cachedCount = await promptCache.restore(newTokens: promptTokens, into: cache) {
             // Cache hit: KV state is pre-populated up to cachedCount tokens.
             // Only compute the remaining (new) tokens.
             var startIndex = cachedCount
@@ -1217,13 +1260,6 @@ func handleChatCompletion(
             let trimmedInput = LMInput(tokens: remainingTokens)
             stream = try MLXLMCommon.generate(
                 input: trimmedInput, cache: cache, parameters: params, context: context
-            )
-        } else if let draftRef = draftModelRef {
-            // Speculative decoding path: draft model generates candidates, main model verifies
-            print("[SwiftLM] Using speculative decoding (\(numDraftTokens) draft tokens/round)")
-            stream = try MLXLMCommon.generate(
-                input: lmInput, cache: cache, parameters: params, context: context,
-                draftModel: draftRef.model, numDraftTokens: numDraftTokens
             )
         } else {
             // Cache miss: process the full prompt.
