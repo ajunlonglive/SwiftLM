@@ -329,10 +329,7 @@ struct MLXServer: AsyncParsableCommand {
             } else {
                 draftFootprintBytes = 0
             }
-            let earlyPhysicalBudget = Int(Double(system.totalRAMBytes) * 0.85)
-                - (4 * 1024 * 1024 * 1024)   // OS/system headroom
-                - draftFootprintBytes          // reserve for draft model resident pages
-            Memory.cacheLimit = max(earlyPhysicalBudget, 2 * 1024 * 1024 * 1024) // floor at 2 GB
+            Memory.cacheLimit = computeSSDMemoryBudget(totalRAMBytes: system.totalRAMBytes, draftWeightBytes: draftFootprintBytes)
             Memory.memoryLimit = 200 * 1024 * 1024 * 1024 // 200 GB sentinel
         }
         
@@ -367,12 +364,7 @@ struct MLXServer: AsyncParsableCommand {
                     } else {
                         draftReserveBytes = 0
                     }
-                    let physicalBudget = max(
-                        Int(Double(system.totalRAMBytes) * 0.85)
-                            - (4 * 1024 * 1024 * 1024)
-                            - draftReserveBytes,
-                        2 * 1024 * 1024 * 1024 // floor at 2 GB
-                    )
+                    let physicalBudget = computeSSDMemoryBudget(totalRAMBytes: system.totalRAMBytes, draftWeightBytes: draftReserveBytes)
                     Memory.cacheLimit = physicalBudget
                     Memory.memoryLimit = 200 * 1024 * 1024 * 1024 // 200GB sentinel to bypass MLX eval_impl spin loop
                     print("[SwiftLM] 💾 Memory strategy: SSD STREAMING (page-cache managed, \(physicalBudget / (1024*1024*1024))GB RAM budget, no swap)")
@@ -392,12 +384,7 @@ struct MLXServer: AsyncParsableCommand {
                     } else {
                         draftReserveBytes = 0
                     }
-                    let physicalBudget = max(
-                        Int(Double(system.totalRAMBytes) * 0.85)
-                            - (4 * 1024 * 1024 * 1024)
-                            - draftReserveBytes,
-                        2 * 1024 * 1024 * 1024 // floor at 2 GB
-                    )
+                    let physicalBudget = computeSSDMemoryBudget(totalRAMBytes: system.totalRAMBytes, draftWeightBytes: draftReserveBytes)
                     Memory.cacheLimit = physicalBudget
                     Memory.memoryLimit = 200 * 1024 * 1024 * 1024 // 200GB sentinel to bypass MLX eval_impl spin loop
                     print("[SwiftLM] 💾 Memory strategy: SSD STREAMING (page-cache managed, \(physicalBudget / (1024*1024*1024))GB RAM budget, no swap)")
@@ -884,6 +871,24 @@ struct ServerConfig: Sendable {
     let prefillSize: Int
     /// When true, each KVCacheSimple layer compresses history > 8192 tokens to 3-bit PolarQuant.
     let turboKV: Bool
+}
+
+// ── SSD Memory Budget ────────────────────────────────────────────────────────
+
+/// Compute the page-cache budget (bytes) for SSD streaming mode.
+///
+/// Formula: `totalRAM × 0.85 − osHeadroom − draftWeightBytes`, floored at 2 GB.
+///
+/// - Parameters:
+///   - totalRAMBytes: Physical RAM reported by the OS (e.g. `system.totalRAMBytes`).
+///   - draftWeightBytes: Weight size (bytes) of the draft model, or 0 if none.
+///     Subtracted so the draft model's resident pages don't push the main model's
+///     page cache over the physical limit and trigger swap (Issue #72).
+/// - Returns: The recommended `Memory.cacheLimit` value in bytes.
+func computeSSDMemoryBudget(totalRAMBytes: UInt64, draftWeightBytes: Int = 0) -> Int {
+    let osHeadroom = 4 * 1024 * 1024 * 1024  // 4 GB for OS + system processes
+    let raw = Int(Double(totalRAMBytes) * 0.85) - osHeadroom - draftWeightBytes
+    return max(raw, 2 * 1024 * 1024 * 1024)  // floor at 2 GB
 }
 
 // ── Model Directory Resolution ───────────────────────────────────────────────
