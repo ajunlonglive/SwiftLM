@@ -331,17 +331,55 @@ struct MLXServer: AsyncParsableCommand {
             setenv("MLX_MAX_OPS_PER_BUFFER", "50", 1)
             print("[SwiftLM] Enabled Async SSD Streaming on directory: \(modelDir.lastPathComponent)")
 
-            // ── Fix #72: Apply SSD memory cap EARLY (before any model loads) ──
-            // Both the main model and draft model must load under the budget.
-            // The sentinel memoryLimit bypasses MLX eval_impl's spin-wait loop.
-            // Also address Copilot comment: apply the cap even when modelDirectory
-            // is nil (first-run download) so downloads also respect the budget.
+            // ── Fix #72 (inference-time): Context-aware memoryLimit ────────────
+            // The 200 GB sentinel bypasses MLX eval_impl's spin-wait loop and is
+            // safe for SSD streaming alone, because only one model's expert pages
+            // are demanded at a time.
+            //
+            // With --draft-model, speculative decoding alternates between the draft
+            // model and the main model in tight succession.  If combined weights
+            // exceed physical RAM, both models' pages thrash the SSD page cache
+            // simultaneously, and the 200 GB sentinel lets MLX demand 40+ GB
+            // without any back-pressure — swapping out to disk aggressively.
+            //
+            // Fix: when the combined footprint exceeds 70% of physical RAM, lower
+            // memoryLimit to physicalRAM × 1.1.  MLX will then hit its hard limit
+            // sooner and begin evicting old expert pages more aggressively instead
+            // of extending into swap.
             let system = ModelProfiler.systemProfile()
             if draftFootprintBytes > 0 {
                 print("[SwiftLM] 📦 Draft model footprint: \(String(format: "%.2f", Double(draftFootprintBytes) / 1e9))GB reserved from SSD budget")
             }
             Memory.cacheLimit = computeSSDMemoryBudget(totalRAMBytes: system.totalRAMBytes, draftWeightBytes: draftFootprintBytes)
-            Memory.memoryLimit = 200 * 1024 * 1024 * 1024 // 200 GB sentinel
+
+            // Determine safe memoryLimit sentinel
+            let mainFootprintBytes = ModelProfiler.profile(modelDirectory: modelDir, modelId: modelId)?.weightFileSizeBytes ?? 0
+            let combinedFootprint = mainFootprintBytes + draftFootprintBytes
+            let physicalRAM = Int(system.totalRAMBytes)
+            let combinedExceedsRAM = combinedFootprint > Int(Double(physicalRAM) * 0.70)
+
+            if combinedExceedsRAM && draftFootprintBytes > 0 {
+                // Combined model weights exceed 70% of physical RAM.
+                // Speculative decoding causes both models' pages to be demanded
+                // simultaneously during draft+verify cycles, which will thrash
+                // the SSD page cache and trigger heavy swap.
+                // Use a tight memoryLimit so MLX evicts pages rather than swapping.
+                let tightLimit = Int(Double(physicalRAM) * 1.1)
+                Memory.memoryLimit = tightLimit
+                print("[SwiftLM] ⚠️  SSD + draft-model RAM pressure warning:")
+                print("[SwiftLM]    Main model: \(String(format: "%.1f", Double(mainFootprintBytes) / 1e9))GB  Draft: \(String(format: "%.1f", Double(draftFootprintBytes) / 1e9))GB  Combined: \(String(format: "%.1f", Double(combinedFootprint) / 1e9))GB  Physical RAM: \(String(format: "%.1f", Double(physicalRAM) / 1e9))GB")
+                print("[SwiftLM]    Speculative decoding alternates both models' forward passes.")
+                print("[SwiftLM]    On this machine the combined weight exceeds physical RAM,")
+                print("[SwiftLM]    causing page-cache thrashing and swap during inference.")
+                print("[SwiftLM]    → Recommendation: remove --draft-model on this machine,")
+                print("[SwiftLM]      or use a smaller draft model whose weights fit in")
+                print("[SwiftLM]      remaining RAM after the main model's page budget (\(Memory.cacheLimit / (1024*1024*1024))GB).")
+                print("[SwiftLM]    Memory limit set to \(tightLimit / (1024*1024*1024))GB (tight cap for MLX eviction pressure)")
+            } else {
+                // No draft model, or combined fits in RAM — use the standard sentinel
+                // to bypass MLX eval_impl's spin-wait loop safely.
+                Memory.memoryLimit = 200 * 1024 * 1024 * 1024 // 200 GB sentinel
+            }
         } else if self.streamExperts {
             // modelDirectory is nil — model not yet downloaded (first-run).
             // Still apply the SSD memory cap so the download itself is bounded.
