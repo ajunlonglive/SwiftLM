@@ -437,11 +437,12 @@ jobs:
             --port 15473 \
             --max-tokens 64 \
             > /tmp/ssd_draft_guard.log 2>&1 &
-          echo "server_pid=$!" >> $GITHUB_OUTPUT
+          PID=$!
+          echo "server_pid=$PID" >> $GITHUB_OUTPUT
 
           echo "Waiting for server (up to 300s)..."
           for i in $(seq 1 300); do
-            if ! kill -0 ${{ steps.server.outputs.server_pid }} 2>/dev/null; then
+            if ! kill -0 $PID 2>/dev/null; then
               echo "Server died early:"
               cat /tmp/ssd_draft_guard.log
               exit 1
