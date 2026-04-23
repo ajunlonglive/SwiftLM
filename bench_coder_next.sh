@@ -31,7 +31,7 @@ REQ_FILE="$LOG_DIR/bench_coder_next.json"
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 wait_for_server() {
-    for i in $(seq 1 180); do
+    for i in $(seq 1 3600); do
         if curl -sf http://127.0.0.1:$PORT/v1/models >/dev/null 2>&1; then
             echo "  ✅ Ready (${i}s)"
             return 0
