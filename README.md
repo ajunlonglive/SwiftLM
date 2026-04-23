@@ -89,25 +89,76 @@ Benchmark results for `gemma-4-26b-a4b-it-4bit` (26B MoE, 4-bit) on M5 Pro 64 GB
 
 ---
 
-## 🧠 Supported Models & Methodologies
+## 📡 Supported Models & Methodologies
 
-`SwiftLM` dynamically maps Apple MLX primitives to standard HuggingFace architectures, enabling complete support for the latest frontier open-weights models across modalities (Text, Vision, Audio).
+`SwiftLM` dynamically maps Apple MLX primitives to standard HuggingFace architectures, enabling native Metal inference across the latest frontier open-weights models.
 
-### Text (LLMs)
-- **Gemma 4**: Fully supports both Dense (`gemma-4-e4b`) and Sparse Mixture of Experts (MoE) architectures (`gemma-4-26b`, `gemma-4-31b`).
-- **Qwen 2.5 & 3**: Robust support for sliding window attention limits and custom RoPE scaling.
-- **Mistral & Mixtral**: Out-of-the-box structural mappings.
-- **Phi-3 & Phi-3.5**: Full 128k context parsing via Swift chunked-prefill.
+### 💬 Text (LLMs)
 
-### Vision (VLMs)
+| Family | Models | Notes |
+|---|---|---|
+| **Gemma 4** | `gemma-4-e2b`, `gemma-4-e4b` (dense) · `gemma-4-26b-a4b`, `gemma-4-31b` (MoE) | Interleaved local + global attention; KV sharing; native quantized KV cache (issue #71 fix) |
+| **Gemma 3 / 3n** | `gemma-3-*`, `gemma-3n-*` | Google Gemma 3 and nano variants |
+| **Gemma / Gemma 2** | `gemma-*`, `gemma-2-*` | Original Gemma family |
+| **Qwen 3.5** | `Qwen3.5-7B`, `Qwen3.5-27B`, `Qwen3.5-122B-A10B`, `Qwen3.5-397B-A22B` | Dense + MoE; SSD streaming at 10× for 122B/397B |
+| **Qwen 3** | `Qwen3-*` (dense + MoE) | Sliding window + hybrid attention |
+| **Qwen 2.5** | `Qwen2.5-7B`, `Qwen2.5-14B`, `Qwen2.5-72B` | Robust RoPE scaling |
+| **Qwen 2** | `Qwen2-*` | Linear RoPE variants |
+| **Phi 4 / PhiMoE** | `phi-4-mlx`, `Phi-3.5-MoE` | Microsoft Phi family incl. MoE |
+| **Phi 3 / Phi** | `Phi-3`, `Phi-3.5-mini` | 128k context via chunked prefill |
+| **Mistral / Mixtral** | `Mistral-7B`, `Mistral-4`, `Mixtral-*` | GQA + sliding window variants |
+| **Llama / Llama 3** | `Llama-3.1-*`, `Llama-3.2-*`, `Llama-3.3-*` | YaRN + dynamic NTK RoPE scaling |
+| **GLM 4** | `GLM-4-*` | THUDM GLM-4 dense + MoE-Lite variants |
+| **DeepSeek V3** | `DeepSeek-V3-*` | MLA attention architecture |
+| **Falcon H1** | `Falcon-H1-*` | Falcon hybrid SSM+attention |
+| **LFM 2** | `LFM2-*`, `LFM2-MoE-*` | Liquid AI dense + MoE |
+| **OLMo 2 / OLMo 3 / OLMoE** | `OLMo-2-*`, `OLMo-3-*` | AllenAI open language models |
+| **Granite / GraniteMoE** | `Granite-*`, `GraniteMoE-Hybrid-*` | IBM Granite hybrid Mamba+attention |
+| **SmolLM 3** | `SmolLM3-*` | HuggingFace compact LM |
+| **MiniCPM** | `MiniCPM-*` | Lightweight efficient LM |
+| **InternLM 2** | `InternLM2-*` | Shanghai AI Lab series |
+| **Cohere / Command-R** | `Command-R-*`, `c4ai-*` | Cohere retrieval-tuned models |
+| **Jamba** | `Jamba-v0.1` | AI21 hybrid Mamba+attention |
+| **Exaone 4** | `EXAONE-4.0-*` | LG AI Research |
+| **MiMo / MiMo V2** | `MiMo-7B-*` | Xiaomi reasoning model |
+| **Ernie 4.5** | `ERNIE-4.5-*` | Baidu ERNIE series |
+| **Baichuan M1** | `Baichuan-M1-*` | Baichuan multimodal base |
+| **Bailing MoE** | `Ling-*` | Bailing/Ling MoE family |
+| **NemotronH** | `Nemotron-H-*` | NVIDIA Nemotron hybrid |
+| **Starcoder 2** | `starcoder2-*` | Code generation |
+| **OpenELM** | `OpenELM-*` | Apple on-device efficient LM |
+| **Apertus / AfMoE** | `Apertus-*` | Sparse MoE research models |
+| **BitNet** | `bitnet-*` | 1-bit weight quantization |
+| **MiniMax** | `MiniMax-Text-*` | Lightning attention architecture |
+| **Olmo3** | `Olmo3-*` | AllenAI Olmo3 series |
+
+### 👁️ Vision (VLMs)
 *Run with `--vision` flag.*
-- **Qwen2-VL & Qwen3-VL**: Real-time positional bounding and Metal image scaling.
-- **PaliGemma / LFM2-VL / Pixtral**: Base64 spatial decomposition.
 
-### Audio (ALMs)
-*Run with `--audio` flag.*
-- **Qwen2-Audio (7B-Instruct)**: Deep multi-modal spectrogram processing via Swift audio interleaving.
-- **Gemma-4 Audio Pipelines**: Ready for Audio-in/Text-out variants mapping `.audio_tower` extraction parameters natively off NVMe.
+| Family | Models | Notes |
+|---|---|---|
+| **Gemma 4** | `gemma-4-*` (VLM mode) | Native image tower via MLXVLM |
+| **Gemma 3** | `gemma-3-*` (VLM mode) | PaLiGemma-style image projection |
+| **Qwen3-VL / Qwen3.5-VL** | `Qwen3-VL-*`, `Qwen3.5-VL-*` | Dynamic resolution with native RoPE |
+| **Qwen2-VL / Qwen2.5-VL** | `Qwen2-VL-2B/7B`, `Qwen2.5-VL-*` | Real-time positional bounding + Metal image scaling |
+| **LFM2-VL** | `LFM2-VL-1.6B` | Liquid AI multimodal |
+| **Pixtral** | `pixtral-12b` | Mistral vision model |
+| **PaliGemma** | `paligemma-*` | Google vision-language |
+| **Idefics 3** | `Idefics3-*` | HuggingFace multimodal |
+| **Mistral 3** | `Mistral-Small-3.1-*` | Mistral vision variant |
+| **FastVLM** | `FastVLM-*` | Apple on-device VLM |
+| **SmolVLM 2** | `SmolVLM2-*` | HuggingFace compact VLM |
+| **GLM OCR** | `glm-4v-*` | THUDM vision+OCR |
+| **QwenVL** | `Qwen-VL-*` | Original Qwen VL |
+
+### 🎧 Audio (ALMs)
+*Run with `--audio` flag. Only `gemma-4-e4b` variants include an audio tower.*
+
+| Family | Models | Notes |
+|---|---|---|
+| **Gemma 4 Omni** | `gemma-4-e4b-it-4bit`, `gemma-4-e4b-it-8bit` | Audio-in via vDSP STFT → Mel spectrogram (16kHz, 128 bins); text-out |
+
+
 
 ---
 
@@ -352,9 +403,45 @@ curl http://localhost:5413/v1/chat/completions \
 | `--min-p` | `0.0` | Default min-p sampling threshold relative to the highest probability token (0 disables) |
 | `--gpu-layers` | `model_default`| Restrict the amount of layers allocated to GPU hardware |
 | `--stream-experts` | `false` | Enable SSD expert streaming for MoE models (10x speedup) |
-| `--turbo-kv` | `false` | Enable TurboQuant 3-bit KV cache compression |
+| `--turbo-kv` | `false` | Enable TurboQuant 3-bit KV cache compression (activates after 2048 tokens, server-wide) |
 | `--draft-model` | (none) | Draft model path/ID for speculative decoding (in-RAM models only) |
 | `--num-draft-tokens` | `4` | Number of draft tokens per speculation round |
+
+## 🔧 Per-Request API Parameters
+
+In addition to the standard OpenAI fields (`temperature`, `top_p`, `max_tokens`, etc.), SwiftLM accepts the following **SwiftLM-specific** fields on `POST /v1/chat/completions`:
+
+| Field | Type | Description |
+|---|---|---|
+| `kv_bits` | `int` (4 or 8) | Enable **MLX-native quantized KV cache** for this request. Uses `QuantizedKVCache` (standard group quantization) instead of `KVCacheSimple`. Separate from `--turbo-kv`. Reduces KV memory ~2–4× at mild quality cost. |
+| `enable_thinking` | `bool` | Force-enable or disable chain-of-thought thinking blocks for Gemma-4 / Qwen3. |
+| `kv_group_size` | `int` | Group size for `kv_bits` quantization (default: `64`). |
+| `top_k` | `int` | Per-request top-k sampling override (0 = disabled). |
+| `min_p` | `float` | Per-request min-p sampling threshold (0 = disabled). |
+| `repetition_penalty` | `float` | Token repetition penalty (e.g. `1.15`). |
+
+### `kv_bits` vs `--turbo-kv` — What's the difference?
+
+| | `kv_bits` (per-request) | `--turbo-kv` (server flag) |
+|---|---|---|
+| **Scope** | Per-request, sent in JSON body | Server-wide, set at startup |
+| **Algorithm** | MLX-native group quantization (4-bit / 8-bit) | Custom 3-bit PolarQuant + QJL Walsh-Hadamard |
+| **Activation** | From token 0 | After 2048 tokens |
+| **Memory savings** | ~2–4× vs FP16 | ~3.5× vs FP16 |
+| **Use case** | Targeted memory reduction per conversation | Extreme long-context (100K+) compression |
+
+### Example: Enable 4-bit KV cache per request
+```bash
+curl http://localhost:5413/v1/chat/completions \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "gemma-4-26b-a4b-it-4bit",
+    "kv_bits": 4,
+    "messages": [
+      {"role": "user", "content": "Summarize the history of computing in 3 sentences."}
+    ]
+  }'
+```
 
 ## 📦 Requirements
 

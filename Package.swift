@@ -114,6 +114,10 @@ let package = Package(
         .testTarget(
             name: "SwiftBuddyTests",
             dependencies: ["SwiftBuddy", "MLXInferenceCore"]
+        ),
+        .testTarget(
+            name: "SwiftLMTests",
+            dependencies: ["SwiftLM"]
         )
     ]
 )
