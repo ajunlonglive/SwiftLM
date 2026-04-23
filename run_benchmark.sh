@@ -201,8 +201,8 @@ if [ "$suite_opt" == "11" ]; then
     echo ""
     echo "=> Starting Test 11: DFlash Benchmark (Qwen3-Coder-Next-4bit)"
     export MODEL="mlx-community/Qwen3-Coder-Next-4bit"
-    chmod +x bench_coder_next.sh
-    ./bench_coder_next.sh
+    chmod +x scripts/profiling/bench_coder_next.sh
+    scripts/profiling/bench_coder_next.sh
     exit $?
 fi
 
@@ -210,8 +210,8 @@ if [ "$suite_opt" == "12" ]; then
     echo ""
     echo "=> Starting Test 12: DFlash Benchmark (Qwen3.6-35B-A3B-4bit)"
     export MODEL="mlx-community/Qwen3.6-35B-A3B-4bit"
-    chmod +x bench_35b.sh
-    ./bench_35b.sh
+    chmod +x scripts/profiling/bench_35b.sh
+    scripts/profiling/bench_35b.sh
     exit $?
 fi
 
