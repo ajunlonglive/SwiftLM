@@ -44,16 +44,19 @@ public enum DFlashDumper {
         let shape = (0..<floatArr.ndim).map { floatArr.dim($0) }
         let totalElements = shape.reduce(1, *)
 
-        // Build numpy .npy header
-        let shapeStr = shape.map(String.init).joined(separator: ", ")
-        let header = "{'descr': '<f4', 'shape': (\(shapeStr)), 'fortran_order': False}"
+        // Build spec-compliant .npy header: shape must be a Python tuple,
+        // spaces pad before the final newline byte.
+        let shapeTuple: String
+        if shape.isEmpty { shapeTuple = "()" }
+        else if shape.count == 1 { shapeTuple = "(\(shape[0]),)" }
+        else { shapeTuple = "(\(shape.map(String.init).joined(separator: ", ")))" }
+        let header = "{'descr': '<f4', 'shape': \(shapeTuple), 'fortran_order': False}"
 
         var headerBytes = Array(header.utf8)
-        headerBytes.append(0x0A)  // newline
-        // Pad to 64-byte boundary
-        while (headerBytes.count + 10) % 64 != 0 {
-            headerBytes.append(0x20)  // space
+        while (headerBytes.count + 10 + 1) % 64 != 0 {
+            headerBytes.append(0x20)  // space padding before newline
         }
+        headerBytes.append(0x0A)  // newline as final byte
 
         var fileData = Data([0x93, 0x4E, 0x55, 0x4D, 0x50, 0x59])  // \x93NUMPY
         fileData.append(0x01)  // major version 1
@@ -84,14 +87,17 @@ public enum DFlashDumper {
 
         let shape = (0..<intArr.ndim).map { intArr.dim($0) }
 
-        let shapeStr = shape.map(String.init).joined(separator: ", ")
-        let header = "{'descr': '<i4', 'shape': (\(shapeStr)), 'fortran_order': False}"
+        let shapeTuple: String
+        if shape.isEmpty { shapeTuple = "()" }
+        else if shape.count == 1 { shapeTuple = "(\(shape[0]),)" }
+        else { shapeTuple = "(\(shape.map(String.init).joined(separator: ", ")))" }
+        let header = "{'descr': '<i4', 'shape': \(shapeTuple), 'fortran_order': False}"
 
         var headerBytes = Array(header.utf8)
-        headerBytes.append(0x0A)
-        while (headerBytes.count + 10) % 64 != 0 {
+        while (headerBytes.count + 10 + 1) % 64 != 0 {
             headerBytes.append(0x20)
         }
+        headerBytes.append(0x0A)
 
         var fileData = Data([0x93, 0x4E, 0x55, 0x4D, 0x50, 0x59])
         fileData.append(0x01)

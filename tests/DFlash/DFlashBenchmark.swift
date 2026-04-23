@@ -61,7 +61,7 @@ struct HardwareInfo: Codable, Sendable {
     static func collect() -> HardwareInfo {
         // Get chip info using sysctl (macOS only)
         let chip = runShellCommand(["sysctl", "-n", "machdep.cpu.brand_string"])?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Unknown"
-        let memoryGB = Int(runShellCommand(["sysctl", "-n", "hw.memsize"])?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "0") ?? 0 / (1024 * 1024 * 1024)
+        let memoryGB = (Int(runShellCommand(["sysctl", "-n", "hw.memsize"])?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "0") ?? 0) / (1024 * 1024 * 1024)
 
         return HardwareInfo(
             chip: chip,
@@ -427,8 +427,12 @@ struct DFlashBenchmarkRunner {
             for blockSize in config.blockTokens {
                 print("\nRunning DFlash (block=\(blockSize))...")
 
+                guard let dflashTarget = targetContainer.model as? DFlashTargetModel else {
+                    print("Error: loaded model does not conform to DFlashTargetModel — cannot run DFlash benchmark")
+                    exit(1)
+                }
                 let dflashResult = await runDFlashGeneration(
-                    targetModelAdapter: targetContainer.model as! DFlashTargetModel,
+                    targetModelAdapter: dflashTarget,
                     draftModel: draftModel,
                     promptTokens: promptTokens,
                     maxNewTokens: config.maxNewTokens,
@@ -534,15 +538,27 @@ func getPeakMemoryGB() -> Double? {
     return nil
 }
 
-func median<T: Comparable & Numeric>(_ values: [T]) -> Double? {
+func median<T: BinaryFloatingPoint>(_ values: [T]) -> Double? {
     guard !values.isEmpty else { return nil }
     let sorted = values.sorted()
     let count = sorted.count
     if count % 2 == 0 {
         let mid = count / 2
-        return (Double(sorted[mid - 1] as! NSNumber) + Double(sorted[mid] as! NSNumber)) / 2
+        return (Double(sorted[mid - 1]) + Double(sorted[mid])) / 2
     } else {
-        return Double(sorted[count / 2] as! NSNumber)
+        return Double(sorted[count / 2])
+    }
+}
+
+func median<T: BinaryInteger>(_ values: [T]) -> Double? {
+    guard !values.isEmpty else { return nil }
+    let sorted = values.sorted()
+    let count = sorted.count
+    if count % 2 == 0 {
+        let mid = count / 2
+        return (Double(sorted[mid - 1]) + Double(sorted[mid])) / 2
+    } else {
+        return Double(sorted[count / 2])
     }
 }
 

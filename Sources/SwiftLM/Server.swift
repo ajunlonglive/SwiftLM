@@ -1441,12 +1441,6 @@ func handleChatCompletion(
             stream = try MLXLMCommon.generate(
                 input: trimmedInput, cache: cache, parameters: params, context: context
             )
-        } else if let draftRef = draftModelRef {
-            // Speculative decoding path: draft model generates candidates, main model verifies
-            print("[SwiftLM] Using speculative decoding (\(numDraftTokens) draft tokens/round)")
-            stream = try MLXLMCommon.generate(
-                input: lmInput, cache: cache, parameters: params, context: context
-            )
         } else {
             // Cache miss: process the full prompt.
             stream = try MLXLMCommon.generate(

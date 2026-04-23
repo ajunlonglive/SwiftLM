@@ -107,18 +107,11 @@ public enum DFlashRuntime {
         vocabSize: Int,
         suppressTokenIDs: [Int]?
     ) -> MLXArray? {
-        let ids = Set((suppressTokenIDs ?? []).map { Int($0) }.filter { $0 >= 0 && $0 < vocabSize })
+        let ids = Set((suppressTokenIDs ?? []).filter { $0 >= 0 && $0 < vocabSize })
         guard !ids.isEmpty else { return nil }
-        let sorted = ids.sorted()
-        let vocabIndices = MLXArray.arange(vocabSize, dtype: .int32)
-        let tokenArray = MLXArray(sorted.map { Int32($0) })
-        return MLX.any(
-            MLX.equal(
-                expandedDimensions(vocabIndices, axis: 1),
-                expandedDimensions(tokenArray, axis: 0)
-            ),
-            axis: 1
-        )
+        var mask = [Bool](repeating: false, count: vocabSize)
+        for id in ids { mask[id] = true }
+        return MLXArray(mask)
     }
 
     /// Greedy token selection with optional suppress mask.
@@ -258,21 +251,25 @@ public enum DFlashRuntime {
         // Streaming: yield events from inside the generation loop
         // via a Continuation, avoiding the buffered-array bottleneck.
         AsyncStream(bufferingPolicy: .unbounded) { continuation in
-            generateStreaming(
-                targetModel: targetModel,
-                draftModel: draftModel,
-                promptTokens: promptTokens,
-                maxNewTokens: maxNewTokens,
-                blockTokens: blockTokens,
-                stopTokenIDs: stopTokenIDs,
-                suppressTokenIDs: suppressTokenIDs,
-                draftSinkSize: draftSinkSize,
-                draftWindowSize: draftWindowSize,
-                yield: { event in
-                    continuation.yield(event)
-                }
-            )
-            continuation.finish()
+            let task = Task {
+                generateStreaming(
+                    targetModel: targetModel,
+                    draftModel: draftModel,
+                    promptTokens: promptTokens,
+                    maxNewTokens: maxNewTokens,
+                    blockTokens: blockTokens,
+                    stopTokenIDs: stopTokenIDs,
+                    suppressTokenIDs: suppressTokenIDs,
+                    draftSinkSize: draftSinkSize,
+                    draftWindowSize: draftWindowSize,
+                    yield: { event in
+                        guard !Task.isCancelled else { return }
+                        continuation.yield(event)
+                    }
+                )
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 
@@ -587,12 +584,13 @@ public enum DFlashRuntime {
             let committedIDs = committedSegment.asArray(Int.self)
             for tokenID in committedIDs {
                 guard generatedTokenIDs.count < maxNewTokens else { break }
-                generatedTokenIDs.append(tokenID)
 
                 if firstTokenYielded {
                     firstTokenYielded = false
                     continue
                 }
+
+                generatedTokenIDs.append(tokenID)
 
                 let acceptanceRatio = generatedTokenIDs.count > 0
                     ? Double(acceptedFromDraft) / Double(generatedTokenIDs.count)
