@@ -13,11 +13,12 @@ mkdir -p "$LOG_DIR"
 export LOG_DIR
 
 # Build request JSON with python to avoid bash escaping
+export MODEL
 python3 << 'PYEOF'
 import json, os
 prompt = "Write a Python function that computes the nth Fibonacci number using memoization. Include type hints and a docstring. Add a main block that prints the first 20 Fibonacci numbers."
 body = {
-    "model": "mlx-community/Qwen3-Coder-Next-4bit",
+    "model": os.environ["MODEL"],
     "messages": [{"role": "user", "content": prompt}],
     "max_tokens": 512,
     "stream": False

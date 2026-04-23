@@ -104,8 +104,10 @@ echo "7) Model Maintain List and Delete"
 echo "8) Test 8: Tool-Call Degeneration Regression (Gemma-4 vague-query bug)"
 echo "9) Test 9: Quantized KV Cache Regression (Gemma-4 issue #71 — native kv_bits)"
 echo "10) Test 10: SSD + Draft Model Memory Regression (Issue #72 — auto-cap + RAM guard)"
+echo "11) Test 11: DFlash Benchmark (Qwen3-Coder-Next-4bit)"
+echo "12) Test 12: DFlash Benchmark (Qwen3.6-35B-A3B-4bit)"
 echo "q) Quit"
-read -p "Option (0-10/q): " suite_opt
+read -p "Option (0-12/q): " suite_opt
 
 if [ "$suite_opt" == "0" ]; then
     echo "=============================================="
@@ -138,7 +140,7 @@ if [ "$suite_opt" == "q" ] || [ -z "$suite_opt" ]; then
     exit 0
 fi
 
-if [ "$suite_opt" == "9" ] || [ "$suite_opt" == "8" ] || [ "$suite_opt" == "10" ]; then
+if [ "$suite_opt" == "9" ] || [ "$suite_opt" == "8" ] || [ "$suite_opt" == "10" ] || [ "$suite_opt" == "11" ] || [ "$suite_opt" == "12" ]; then
     : # handled below — fall through
 fi
 
@@ -1310,6 +1312,22 @@ if [ "$suite_opt" == "10" ]; then
         echo "   Log: $T10_LOG"
         exit 1
     fi
+fi
+
+if [ "$suite_opt" == "11" ]; then
+    echo ""
+    echo "=> Starting Test 11: DFlash Benchmark (Qwen3-Coder-Next-4bit)"
+    chmod +x bench_coder_next.sh
+    ./bench_coder_next.sh
+    exit $?
+fi
+
+if [ "$suite_opt" == "12" ]; then
+    echo ""
+    echo "=> Starting Test 12: DFlash Benchmark (Qwen3.6-35B-A3B-4bit)"
+    chmod +x bench_35b.sh
+    ./bench_35b.sh
+    exit $?
 fi
 
 # Fallback to Test 1 for anything else

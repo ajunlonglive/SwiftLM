@@ -15,11 +15,12 @@ mkdir -p "$LOG_DIR"
 export LOG_DIR
 
 # Build request JSON with python to avoid bash escaping hell
+export MODEL
 python3 << 'PYEOF'
 import json, os
 prompt = "The function $f$ satisfies the functional equation \\[ f(x) + f(y) = f(x + y) - xy - 1 \\] for all real numbers $x$ and $y$. If $f(1) = 1$, then find all integers $n$ such that $f(n) = n$. Enter all such integers, separated by commas. Please reason step by step, and put your final answer within \\boxed{}."
 body = {
-    "model": "mlx-community/Qwen3.6-35B-A3B-4bit",
+    "model": os.environ["MODEL"],
     "messages": [{"role": "user", "content": prompt}],
     "max_tokens": 512,
     "stream": False
