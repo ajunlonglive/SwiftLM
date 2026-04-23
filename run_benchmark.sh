@@ -88,28 +88,29 @@ print_server_log() {
 
 echo "=============================================="
 export METAL_LIBRARY_PATH="$(pwd)/.build/arm64-apple-macosx/release"
-echo "    Aegis-AI MLX Profiling Benchmark Suite    "
-echo "=============================================="
-echo ""
 
-echo "Select Action:"
-echo "0) Test 0: Run Full Automated Matrix (Offline Evaluation)"
-echo "1) Test 1: Automated Context & Memory Profile (TPS & RAM matrix)"
-echo "2) Test 2: Prompt Cache & Sliding Window Regression Test"
-echo "3) Test 3: HomeSec Benchmark (LLM Only)"
-echo "4) Test 4: VLM End-to-End Evaluation"
-echo "5) Test 5: ALM Audio End-to-End Evaluation"
-echo "6) Test 6: Omni End-to-End Evaluation"
-echo "7) Model Maintain List and Delete"
-echo "8) Test 8: Tool-Call Degeneration Regression (Gemma-4 vague-query bug)"
-echo "9) Test 9: Quantized KV Cache Regression (Gemma-4 issue #71 — native kv_bits)"
-echo "10) Test 10: SSD + Draft Model Memory Regression (Issue #72 — auto-cap + RAM guard)"
-echo "11) Test 11: DFlash Benchmark (Qwen3-Coder-Next-4bit)"
-echo "12) Test 12: DFlash Benchmark (Qwen3.6-35B-A3B-4bit)"
-echo "q) Quit"
 if [ -n "${SUITE_OPT:-}" ]; then
+    # Sub-process invocation from automated matrix — skip interactive menu
     suite_opt="$SUITE_OPT"
 else
+    echo "    Aegis-AI MLX Profiling Benchmark Suite    "
+    echo "=============================================="
+    echo ""
+    echo "Select Action:"
+    echo "0) Test 0: Run Full Automated Matrix (Offline Evaluation)"
+    echo "1) Test 1: Automated Context & Memory Profile (TPS & RAM matrix)"
+    echo "2) Test 2: Prompt Cache & Sliding Window Regression Test"
+    echo "3) Test 3: HomeSec Benchmark (LLM Only)"
+    echo "4) Test 4: VLM End-to-End Evaluation"
+    echo "5) Test 5: ALM Audio End-to-End Evaluation"
+    echo "6) Test 6: Omni End-to-End Evaluation"
+    echo "7) Model Maintain List and Delete"
+    echo "8) Test 8: Tool-Call Degeneration Regression (Gemma-4 vague-query bug)"
+    echo "9) Test 9: Quantized KV Cache Regression (Gemma-4 issue #71 — native kv_bits)"
+    echo "10) Test 10: SSD + Draft Model Memory Regression (Issue #72 — auto-cap + RAM guard)"
+    echo "11) Test 11: DFlash Benchmark (Qwen3-Coder-Next-4bit)"
+    echo "12) Test 12: DFlash Benchmark (Qwen3.6-35B-A3B-4bit)"
+    echo "q) Quit"
     read -p "Option (0-12/q): " suite_opt
 fi
 
