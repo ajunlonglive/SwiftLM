@@ -216,7 +216,9 @@ jobs:
         with:
           name: speculative-test-logs
           path: /tmp/SwiftLM-test-speculative.log
-          retention  # ── Speculative Decoding Memory Evaluation ──
+          retention-days: 7
+
+  # ── Speculative Decoding Memory Evaluation ──
   # Runs the 2B model with NUM_DRAFT_TOKENS=2 to check peak
   # memory compression/efficiency. Emits vm_stat readings as step summary.
   speculative-decoding-eval:
