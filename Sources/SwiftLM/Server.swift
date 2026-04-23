@@ -301,6 +301,22 @@ struct MLXServer: AsyncParsableCommand {
         // Resolve model directory for profiling (checks HuggingFace cache)
         let modelDirectory = resolveModelDirectory(modelId: modelId)
         
+        // ── Fix #72: Compute draft model footprint ONCE (Copilot review) ──────
+        // Resolved before the streamExperts block so the exact byte count can be
+        // reused for the early cap, both strategy branches, and logging without
+        // repeating the filesystem walk.  Use weightFileSizeBytes (exact bytes)
+        // instead of weightMemoryGB * 1_073_741_824 to avoid the ~7% GiB/GB
+        // mismatch flagged in Copilot review (weightMemoryGB = bytes / 1e9, not /2^30).
+        let draftFootprintBytes: Int
+        if self.streamExperts,
+           let draftPath = self.draftModel,
+           let draftDir = resolveModelDirectory(modelId: draftPath),
+           let draftProfile = ModelProfiler.profile(modelDirectory: draftDir, modelId: draftPath) {
+            draftFootprintBytes = draftProfile.weightFileSizeBytes
+        } else {
+            draftFootprintBytes = 0
+        }
+
         if self.streamExperts, let modelDir = modelDirectory {
             setenv("EXPERIMENTAL_SSD_STREAM", modelDir.path, 1)
             // Activate the modern Swift ExpertStreamingConfig so Load.swift can:
@@ -318,17 +334,18 @@ struct MLXServer: AsyncParsableCommand {
             // ── Fix #72: Apply SSD memory cap EARLY (before any model loads) ──
             // Both the main model and draft model must load under the budget.
             // The sentinel memoryLimit bypasses MLX eval_impl's spin-wait loop.
+            // Also address Copilot comment: apply the cap even when modelDirectory
+            // is nil (first-run download) so downloads also respect the budget.
             let system = ModelProfiler.systemProfile()
-            // Estimate draft model footprint to reserve headroom in the budget.
-            let draftFootprintBytes: Int
-            if let draftPath = self.draftModel,
-               let draftDir = resolveModelDirectory(modelId: draftPath),
-               let draftProfile = ModelProfiler.profile(modelDirectory: draftDir, modelId: draftPath) {
-                draftFootprintBytes = Int(draftProfile.weightMemoryGB * 1_073_741_824)
-                print("[SwiftLM] 📦 Draft model footprint: \(String(format: "%.1f", draftProfile.weightMemoryGB))GB reserved from SSD budget")
-            } else {
-                draftFootprintBytes = 0
+            if draftFootprintBytes > 0 {
+                print("[SwiftLM] 📦 Draft model footprint: \(String(format: "%.2f", Double(draftFootprintBytes) / 1e9))GB reserved from SSD budget")
             }
+            Memory.cacheLimit = computeSSDMemoryBudget(totalRAMBytes: system.totalRAMBytes, draftWeightBytes: draftFootprintBytes)
+            Memory.memoryLimit = 200 * 1024 * 1024 * 1024 // 200 GB sentinel
+        } else if self.streamExperts {
+            // modelDirectory is nil — model not yet downloaded (first-run).
+            // Still apply the SSD memory cap so the download itself is bounded.
+            let system = ModelProfiler.systemProfile()
             Memory.cacheLimit = computeSSDMemoryBudget(totalRAMBytes: system.totalRAMBytes, draftWeightBytes: draftFootprintBytes)
             Memory.memoryLimit = 200 * 1024 * 1024 * 1024 // 200 GB sentinel
         }
@@ -355,16 +372,8 @@ struct MLXServer: AsyncParsableCommand {
                 if self.streamExperts {
                     // SSD Streaming: expert weights are mmap'd from SSD via the OS page cache.
                     // No swap involved — the page cache evicts stale expert pages cleanly.
-                    // Draft model footprint already reserved by the early cap above.
-                    let draftReserveBytes: Int
-                    if let draftPath = self.draftModel,
-                       let draftDir = resolveModelDirectory(modelId: draftPath),
-                       let draftProf = ModelProfiler.profile(modelDirectory: draftDir, modelId: draftPath) {
-                        draftReserveBytes = Int(draftProf.weightMemoryGB * 1_073_741_824)
-                    } else {
-                        draftReserveBytes = 0
-                    }
-                    let physicalBudget = computeSSDMemoryBudget(totalRAMBytes: system.totalRAMBytes, draftWeightBytes: draftReserveBytes)
+                    // draftFootprintBytes pre-computed once above (Copilot review).
+                    let physicalBudget = computeSSDMemoryBudget(totalRAMBytes: system.totalRAMBytes, draftWeightBytes: draftFootprintBytes)
                     Memory.cacheLimit = physicalBudget
                     Memory.memoryLimit = 200 * 1024 * 1024 * 1024 // 200GB sentinel to bypass MLX eval_impl spin loop
                     print("[SwiftLM] 💾 Memory strategy: SSD STREAMING (page-cache managed, \(physicalBudget / (1024*1024*1024))GB RAM budget, no swap)")
@@ -375,16 +384,8 @@ struct MLXServer: AsyncParsableCommand {
                 }
             case .layerPartitioned:
                 if self.streamExperts {
-                    // Draft model footprint already reserved by the early cap above.
-                    let draftReserveBytes: Int
-                    if let draftPath = self.draftModel,
-                       let draftDir = resolveModelDirectory(modelId: draftPath),
-                       let draftProf = ModelProfiler.profile(modelDirectory: draftDir, modelId: draftPath) {
-                        draftReserveBytes = Int(draftProf.weightMemoryGB * 1_073_741_824)
-                    } else {
-                        draftReserveBytes = 0
-                    }
-                    let physicalBudget = computeSSDMemoryBudget(totalRAMBytes: system.totalRAMBytes, draftWeightBytes: draftReserveBytes)
+                    // draftFootprintBytes pre-computed once above (Copilot review).
+                    let physicalBudget = computeSSDMemoryBudget(totalRAMBytes: system.totalRAMBytes, draftWeightBytes: draftFootprintBytes)
                     Memory.cacheLimit = physicalBudget
                     Memory.memoryLimit = 200 * 1024 * 1024 * 1024 // 200GB sentinel to bypass MLX eval_impl spin loop
                     print("[SwiftLM] 💾 Memory strategy: SSD STREAMING (page-cache managed, \(physicalBudget / (1024*1024*1024))GB RAM budget, no swap)")
