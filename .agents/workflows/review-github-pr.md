@@ -12,7 +12,12 @@ reviewing code changes, to pushing a clean commit back to the correct fork branc
 
 ## Prerequisites
 
-- `gh` CLI authenticated (`which gh` → `/opt/homebrew/bin/gh`)
+- `gh` CLI path on macOS: **`/opt/homebrew/bin/gh`**
+  ```bash
+  export PATH="/opt/homebrew/bin:$PATH"
+  which gh  # → /opt/homebrew/bin/gh
+  ```
+- `gh` must be authenticated (`gh auth status`)
 - Working directory: `/Users/simba/workspace/mlx-server`
 - Remote `fork` may need to be added if pushing to a contributor's fork:
   ```bash
