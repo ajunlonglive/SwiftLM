@@ -297,6 +297,34 @@ struct MLXServer: AsyncParsableCommand {
             modelConfig.lazyLoad = true
         }
 
+        // ── Strategy: --stream-experts + --draft-model ───────────────────────────
+        // README.md notes speculative decoding is "counterproductive" for SSD-streaming
+        // MoE at the default 4 draft tokens: the verify pass sends N+1 positions each
+        // routing to *different* experts, scaling SSD I/O by the union of all expert
+        // selections across every position simultaneously.
+        //
+        // However, with numDraftTokens = 1, the verify pass sends only 2 positions —
+        // minimal fan-out. If the draft acceptance rate is ≥ 50%, the draft model's
+        // speed advantage (~73 tok/s) still yields net positive throughput despite the
+        // 2× SSD I/O overhead, especially on models where the draft hit rate is high.
+        //
+        // Strategy: auto-cap numDraftTokens to 1 and print a performance advisory.
+        // This keeps the combination functional while minimising the fan-out penalty.
+        // Users who understand the tradeoff can still benefit from the draft model.
+        if self.streamExperts, self.draftModel != nil {
+            if self.numDraftTokens > 1 {
+                print("[SwiftLM] ⚠️  SSD streaming + draft model: auto-capping --num-draft-tokens to 1")
+                print("[SwiftLM]    With N>1 draft tokens the verify pass fans expert I/O across N+1 SSD")
+                print("[SwiftLM]    positions simultaneously, which regresses throughput vs no draft model.")
+                print("[SwiftLM]    At 1 draft token (2 positions) the fan-out is minimal and net positive")
+                print("[SwiftLM]    if draft acceptance rate ≥ 50%.")
+                print("[SwiftLM]    ℹ️  For best throughput: use --stream-experts alone (no draft model).")
+                self.numDraftTokens = 1
+            } else {
+                print("[SwiftLM] ℹ️  SSD streaming + draft model (1 token/round): minimal fan-out mode active.")
+            }
+        }
+
         // ── Pre-load profiling ──
         // Resolve model directory for profiling (checks HuggingFace cache)
         let modelDirectory = resolveModelDirectory(modelId: modelId)
