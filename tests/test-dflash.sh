@@ -66,9 +66,23 @@ fi
 TOTAL_RAM_GB=$(sysctl -n hw.memsize 2>/dev/null | awk '{printf "%.0f", $1 / 1073741824}')
 log "System RAM: ${TOTAL_RAM_GB} GB"
 
-if [ "$TOTAL_RAM_GB" -lt 8 ] 2>/dev/null; then
-    log "⚠️  WARNING: ${TOTAL_RAM_GB} GB RAM detected. Dual-model test requires ~6 GB."
-    log "   Consider running on a machine with ≥8 GB RAM."
+# On low-RAM machines (< 12 GB), the combined main + draft model weights
+# (~6 GB) exceed available memory after OS reservation.  Without SSD
+# streaming, all weights must be GPU-resident or swapped via macOS VM,
+# which causes Metal command buffers to exceed Apple's 5-second GPU
+# Watchdog timeout → Abort trap: 6.
+#
+# Fix: enable --stream-experts on low-RAM machines.  This uses mmap-based
+# weight loading (pread from SSD via the OS page cache) so the GPU never
+# stalls waiting for swap.  Draft tokens are auto-capped to 1 server-side
+# to minimise SSD I/O fan-out during the verify pass.
+EXTRA_FLAGS=""
+if [ "$TOTAL_RAM_GB" -lt 12 ] 2>/dev/null; then
+    log "⚠️  ${TOTAL_RAM_GB} GB RAM: enabling --stream-experts for SSD-backed weight paging"
+    log "   Combined model weights (~6 GB) exceed available RAM. SSD streaming prevents"
+    log "   Metal GPU Watchdog timeouts during DFlash verify passes."
+    EXTRA_FLAGS="--stream-experts"
+    NUM_DRAFT_TOKENS=1  # auto-capped server-side too, but be explicit
 fi
 
 # ══════════════════════════════════════════════════════════════════════
@@ -83,11 +97,14 @@ log "Starting server with DFlash speculative decoding..."
 log "  Main model:  $MAIN_MODEL"
 log "  Draft model: $DRAFT_MODEL"
 log "  Draft tokens per round: $NUM_DRAFT_TOKENS"
+if [ -n "$EXTRA_FLAGS" ]; then
+    log "  Extra flags: $EXTRA_FLAGS"
+fi
 
 "$BINARY" --model "$MAIN_MODEL" --port "$PORT" --host "$HOST" \
     --draft-model "$DRAFT_MODEL" \
     --num-draft-tokens "$NUM_DRAFT_TOKENS" \
-    --dflash \
+    --dflash $EXTRA_FLAGS \
     > "$LOG_FILE" 2>&1 &
 SERVER_PID=$!
 

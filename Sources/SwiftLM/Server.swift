@@ -290,6 +290,15 @@ struct MLXServer: AsyncParsableCommand {
             setrlimit(RLIMIT_NOFILE, &rl)
         }
 
+        // Cap Metal command buffer size BEFORE any MLX operation to prevent the
+        // 5-second Apple GPU Watchdog from killing processes under swap pressure.
+        // This env var must be set before MLX's Metal backend initializes.
+        // Value 50 splits large computation graphs into ~1-layer chunks so macOS
+        // can page in weights incrementally without exceeding the watchdog timeout.
+        if self.draftModel != nil || self.streamExperts {
+            setenv("MLX_MAX_OPS_PER_BUFFER", "50", 1)
+        }
+
         // Register SwiftLM-owned DFlash model types before any model loading.
         await registerDFlashModelTypes()
 
@@ -467,7 +476,6 @@ struct MLXServer: AsyncParsableCommand {
                     print("[SwiftLM] 💾 Memory strategy: SSD STREAMING (page-cache managed, \(physicalBudget / (1024*1024*1024))GB RAM budget, no swap)")
                 } else {
                     Memory.cacheLimit = plan.recommendedCacheLimit
-                    setenv("MLX_MAX_OPS_PER_BUFFER", "50", 1) // Cap buffer size to avoid 5s Metal GPU Watchdog during SSD swap
                     print("[SwiftLM] \(plan.strategy.emoji) Memory strategy: SWAP-ASSISTED (\(String(format: "%.1f", plan.overcommitRatio))× overcommit, cache limited to \(plan.recommendedCacheLimit / (1024*1024))MB)")
                     for w in plan.warnings { print("[SwiftLM]    \(w)") }
                 }
@@ -479,7 +487,6 @@ struct MLXServer: AsyncParsableCommand {
                     print("[SwiftLM] 💾 Memory strategy: SSD STREAMING (page-cache managed, \(physicalBudget / (1024*1024*1024))GB RAM budget, no swap)")
                 } else {
                     Memory.cacheLimit = plan.recommendedCacheLimit
-                    setenv("MLX_MAX_OPS_PER_BUFFER", "50", 1) // Cap buffer size to avoid 5s Metal GPU Watchdog during SSD swap
                     print("[SwiftLM] \(plan.strategy.emoji) Memory strategy: LAYER PARTITIONED (\(plan.recommendedGPULayers)/\(plan.totalLayers) GPU layers, cache limited to \(plan.recommendedCacheLimit / (1024*1024))MB)")
                     for w in plan.warnings { print("[SwiftLM]    \(w)") }
                 }
