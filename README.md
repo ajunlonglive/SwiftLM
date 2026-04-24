@@ -438,6 +438,8 @@ curl http://localhost:5413/v1/chat/completions \
 | `--turbo-kv` | `false` | Enable TurboQuant 3-bit KV cache compression (activates after 2048 tokens, server-wide) |
 | `--draft-model` | (none) | Draft model path/ID for speculative decoding. When used with `--stream-experts`, `--num-draft-tokens` is auto-capped to 1 to minimise SSD I/O fan-out (see performance note above). |
 | `--num-draft-tokens` | `4` | Tokens per speculation round. Auto-capped to 1 when combined with `--stream-experts`. |
+| `--dflash` | `false` | Enable DFlash block-diffusion speculative decoding. Requires a compatible DFlash draft model |
+| `--dflash-block-size`| (auto) | Number of tokens per DFlash draft block. Defaults to draft model config |
 
 ## 🔧 Per-Request API Parameters
 

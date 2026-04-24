@@ -86,26 +86,33 @@ print_server_log() {
     fi
 }
 
-echo "=============================================="
 export METAL_LIBRARY_PATH="$(pwd)/.build/arm64-apple-macosx/release"
-echo "    Aegis-AI MLX Profiling Benchmark Suite    "
-echo "=============================================="
-echo ""
 
-echo "Select Action:"
-echo "0) Test 0: Run Full Automated Matrix (Offline Evaluation)"
-echo "1) Test 1: Automated Context & Memory Profile (TPS & RAM matrix)"
-echo "2) Test 2: Prompt Cache & Sliding Window Regression Test"
-echo "3) Test 3: HomeSec Benchmark (LLM Only)"
-echo "4) Test 4: VLM End-to-End Evaluation"
-echo "5) Test 5: ALM Audio End-to-End Evaluation"
-echo "6) Test 6: Omni End-to-End Evaluation"
-echo "7) Model Maintain List and Delete"
-echo "8) Test 8: Tool-Call Degeneration Regression (Gemma-4 vague-query bug)"
-echo "9) Test 9: Quantized KV Cache Regression (Gemma-4 issue #71 — native kv_bits)"
-echo "10) Test 10: SSD + Draft Model Memory Regression (Issue #72 — auto-cap + RAM guard)"
-echo "q) Quit"
-read -p "Option (0-10/q): " suite_opt
+if [ -n "${SUITE_OPT:-}" ]; then
+    # Sub-process invocation from automated matrix — skip interactive menu
+    suite_opt="$SUITE_OPT"
+else
+    echo "=============================================="
+    echo "    Aegis-AI MLX Profiling Benchmark Suite    "
+    echo "=============================================="
+    echo ""
+    echo "Select Action:"
+    echo "0) Test 0: Run Full Automated Matrix (Offline Evaluation)"
+    echo "1) Test 1: Automated Context & Memory Profile (TPS & RAM matrix)"
+    echo "2) Test 2: Prompt Cache & Sliding Window Regression Test"
+    echo "3) Test 3: HomeSec Benchmark (LLM Only)"
+    echo "4) Test 4: VLM End-to-End Evaluation"
+    echo "5) Test 5: ALM Audio End-to-End Evaluation"
+    echo "6) Test 6: Omni End-to-End Evaluation"
+    echo "7) Model Maintain List and Delete"
+    echo "8) Test 8: Tool-Call Degeneration Regression (Gemma-4 vague-query bug)"
+    echo "9) Test 9: Quantized KV Cache Regression (Gemma-4 issue #71 — native kv_bits)"
+    echo "10) Test 10: SSD + Draft Model Memory Regression (Issue #72 — auto-cap + RAM guard)"
+    echo "11) Test 11: DFlash Benchmark (Qwen3-Coder-Next-4bit)"
+    echo "12) Test 12: DFlash Benchmark (Qwen3.6-35B-A3B-4bit)"
+    echo "q) Quit"
+    read -p "Option (0-12/q): " suite_opt
+fi
 
 if [ "$suite_opt" == "0" ]; then
     echo "=============================================="
@@ -126,7 +133,7 @@ if [ "$suite_opt" == "0" ]; then
             MODEL=$(python3 scripts/hf_discovery.py "mlx-community/Qwen Audio Instruct" || echo "mlx-community/Qwen2-Audio-7B-Instruct")
         fi
         
-        echo -e "$TEST_ID\n11\n$MODEL" | HEADLESS=1 ./run_benchmark.sh
+        SUITE_OPT=$TEST_ID MODEL=$MODEL ./run_benchmark.sh
         sleep 5
     done
     echo "✅ Offline matrix execution fully completed."
@@ -195,6 +202,24 @@ if [ "$suite_opt" == "7" ]; then
     done
 fi
 
+if [ "$suite_opt" == "11" ]; then
+    echo ""
+    echo "=> Starting Test 11: DFlash Benchmark (Qwen3-Coder-Next-4bit)"
+    export MODEL="mlx-community/Qwen3-Coder-Next-4bit"
+    chmod +x scripts/profiling/bench_coder_next.sh
+    scripts/profiling/bench_coder_next.sh
+    exit $?
+fi
+
+if [ "$suite_opt" == "12" ]; then
+    echo ""
+    echo "=> Starting Test 12: DFlash Benchmark (Qwen3.6-35B-A3B-4bit)"
+    export MODEL="mlx-community/Qwen3.6-35B-A3B-4bit"
+    chmod +x scripts/profiling/bench_35b.sh
+    scripts/profiling/bench_35b.sh
+    exit $?
+fi
+
 echo ""
 PS3="Select a model to use: "
 if [ "$suite_opt" == "4" ]; then
@@ -241,28 +266,30 @@ else
     )
 fi
 
-select opt in "${options[@]}"
-do
-    case $opt in
-        "Custom (Enter your own Hub ID)")
-            read -p "Enter HuggingFace ID (e.g., mlx-community/Llama-3.2-3B-Instruct-4bit): " custom_model
-            MODEL=$custom_model
-            break
-            ;;
-        "Quit")
-            echo "Exiting."
-            exit 0
-            ;;
-        *) 
-            if [[ -n "$opt" ]]; then
-                MODEL=$opt
+if [ -z "$MODEL" ]; then
+    select opt in "${options[@]}"
+    do
+        case $opt in
+            "Custom (Enter your own Hub ID)")
+                read -p "Enter HuggingFace ID (e.g., mlx-community/Llama-3.2-3B-Instruct-4bit): " custom_model
+                MODEL=$custom_model
                 break
-            else
-                echo "Invalid option $REPLY"
-            fi
-            ;;
-    esac
-done
+                ;;
+            "Quit")
+                echo "Exiting."
+                exit 0
+                ;;
+            *) 
+                if [[ -n "$opt" ]]; then
+                    MODEL=$opt
+                    break
+                else
+                    echo "Invalid option $REPLY"
+                fi
+                ;;
+        esac
+    done
+fi
 
 # Ensure model has an org prefix if it doesn't already
 if [[ "$MODEL" != *"/"* ]]; then

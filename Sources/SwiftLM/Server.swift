@@ -11,6 +11,7 @@
 
 import ArgumentParser
 import CoreImage
+import DFlash
 import Foundation
 import HTTPTypes
 import Hummingbird
@@ -18,6 +19,7 @@ import Hub
 import MLX
 import MLXLLM
 import MLXLMCommon
+import MLXNN
 import MLXVLM
 import MLXInferenceCore
 import Tokenizers
@@ -272,7 +274,34 @@ struct MLXServer: AsyncParsableCommand {
     @Option(name: .long, help: "Number of draft tokens per speculation round (default: 4)")
     var numDraftTokens: Int = 4
 
+    @Flag(name: .long, help: "Enable DFlash block-diffusion speculative decoding. Requires a DFlash draft model (auto-resolved or specified via --draft-model).")
+    var dflash: Bool = false
+
+    @Option(name: .long, help: "DFlash block size (number of tokens per draft block). Default: use draft model's configured block_size.")
+    var dflashBlockSize: Int?
+
     mutating func run() async throws {
+        // Raise the open-file limit: large sharded models (e.g. Kimi K2.5, 182 safetensor
+        // shards) + draft model + metallib + dylibs can exhaust the default macOS FD limit of 256.
+        var rl = rlimit()
+        getrlimit(RLIMIT_NOFILE, &rl)
+        if rl.rlim_cur < 4096 {
+            rl.rlim_cur = min(4096, rl.rlim_max)
+            setrlimit(RLIMIT_NOFILE, &rl)
+        }
+
+        // Cap Metal command buffer size BEFORE any MLX operation to prevent the
+        // 5-second Apple GPU Watchdog from killing processes under swap pressure.
+        // This env var must be set before MLX's Metal backend initializes.
+        // Value 50 splits large computation graphs into ~1-layer chunks so macOS
+        // can page in weights incrementally without exceeding the watchdog timeout.
+        if self.draftModel != nil || self.streamExperts {
+            setenv("MLX_MAX_OPS_PER_BUFFER", "50", 1)
+        }
+
+        // Register SwiftLM-owned DFlash model types before any model loading.
+        await registerDFlashModelTypes()
+
         print("[SwiftLM] Loading model: \(model)")
         let modelId = model
 
@@ -336,8 +365,7 @@ struct MLXServer: AsyncParsableCommand {
         // instead of weightMemoryGB * 1_073_741_824 to avoid the ~7% GiB/GB
         // mismatch flagged in Copilot review (weightMemoryGB = bytes / 1e9, not /2^30).
         let draftFootprintBytes: Int
-        if self.streamExperts,
-           let draftPath = self.draftModel,
+        if let draftPath = self.draftModel,
            let draftDir = resolveModelDirectory(modelId: draftPath),
            let draftProfile = ModelProfiler.profile(modelDirectory: draftDir, modelId: draftPath) {
             draftFootprintBytes = draftProfile.weightFileSizeBytes
@@ -425,7 +453,7 @@ struct MLXServer: AsyncParsableCommand {
            if let profile = profile {
             let system = ModelProfiler.systemProfile()
             let contextSize = self.ctxSize ?? 4096
-            let plan = ModelProfiler.plan(model: profile, system: system, contextSize: contextSize)
+            let plan = ModelProfiler.plan(model: profile, system: system, contextSize: contextSize, draftWeightBytes: draftFootprintBytes)
             partitionPlan = plan
 
             // --info mode: print report and exit
@@ -563,10 +591,22 @@ struct MLXServer: AsyncParsableCommand {
 
         print("[SwiftLM] Loaded model configuration. Inferred tool call format: \(String(describing: await container.configuration.toolCallFormat))")
 
+        // ── Check if target model supports DFlash ──
+        let dflashTargetModel: (any DFlashTargetModel)? = await container.perform { context -> (any DFlashTargetModel)? in
+            context.model as? any DFlashTargetModel
+        }
+        if self.dflash {
+            if dflashTargetModel != nil {
+                print("[SwiftLM] DFlash: target model supports DFlashTargetModel")
+            } else {
+                print("[SwiftLM] ⚠️  DFlash enabled but target model does NOT conform to DFlashTargetModel")
+            }
+        }
+
         // ── Load draft model for speculative decoding ──
         let draftModelRef: DraftModelRef?
         let numDraftTokensConfig = self.numDraftTokens
-        if let draftModelPath = self.draftModel {
+        if let draftModelPath = self.draftModel, !self.dflash {
             print("[SwiftLM] Loading draft model for speculative decoding: \(draftModelPath)")
             var draftConfig: ModelConfiguration
             let draftFM = FileManager.default
@@ -596,8 +636,69 @@ struct MLXServer: AsyncParsableCommand {
             }
             draftModelRef = await draftContainer.extractDraftModel()
             print("[SwiftLM] Draft model loaded successfully (\(numDraftTokensConfig) tokens/round)")
+            print("[SwiftLM] Using speculative decoding: \(draftModelPath) → \(modelId) (\(numDraftTokensConfig) draft tokens/round)")
         } else {
             draftModelRef = nil
+        }
+
+        // ── Load DFlash draft model for block-diffusion speculative decoding ──
+        let dflashModel: DFlashDraftModel?
+        let dflashBlockSizeConfig = self.dflashBlockSize
+        let dflashConfig = DFlashDraftConfiguration.self
+        if self.dflash {
+            // Resolve draft model reference
+            let resolvedDraftRef: String
+            if let explicit = self.draftModel {
+                resolvedDraftRef = explicit
+            } else if let autoRef = DFlashDraftRegistry.resolveDraftRef(modelRef: modelId) {
+                resolvedDraftRef = autoRef
+                print("[SwiftLM] DFlash: auto-resolved draft model → \(autoRef)")
+            } else {
+                print("[SwiftLM] ⚠️  DFlash enabled but no draft model found for '\(modelId)'. Use --draft-model to specify one.")
+                resolvedDraftRef = ""
+            }
+
+            if !resolvedDraftRef.isEmpty {
+                print("[SwiftLM] Loading DFlash draft model: \(resolvedDraftRef)")
+                let draftDir = resolveModelDirectory(modelId: resolvedDraftRef)
+                if let dir = draftDir {
+                    do {
+                        let configURL = dir.appendingPathComponent("config.json")
+                        let data = try Data(contentsOf: configURL)
+                        let config = try JSONDecoder().decode(dflashConfig, from: data)
+                        let model = DFlashDraftModel(config)
+
+                        // Load weights
+                        let weightURL = dir.appendingPathComponent("weights.safetensors")
+                        let ntURL = dir.appendingPathComponent("model.safetensors")
+                        let actualWeightURL = FileManager.default.fileExists(atPath: weightURL.path) ? weightURL : ntURL
+
+                        let weights = try loadArrays(url: actualWeightURL)
+                        let sanitized = model.sanitize(weights: weights)
+                        let parameters = ModuleParameters.unflattened(sanitized)
+                        try model.update(parameters: parameters, verify: .none)
+
+                        dflashModel = model
+                        // Register DFlashKernels as the global provider
+                        // so Qwen35GatedDeltaNet can use tape-recording forward
+                        DFlashKernelRegistry.provider = DFlashKernels.shared
+                        DFlashDumper.setup()
+                        print("[SwiftLM] DFlash draft model loaded (block_size=\(model.blockSize), \(model.targetLayerIDs.count) target layers, mask_token=\(model.maskTokenID))")
+                        print("[SwiftLM] Draft model loaded successfully (\(model.blockSize) block size, DFlash mode)")
+                        print("[SwiftLM] Using speculative decoding: \(resolvedDraftRef) → \(modelId) (DFlash block-diffusion)")
+                    } catch {
+                        print("[SwiftLM] ⚠️  Failed to load DFlash draft model: \(error)")
+                        dflashModel = nil
+                    }
+                } else {
+                    print("[SwiftLM] ⚠️  DFlash draft model not found locally: \(resolvedDraftRef). Download it first with: hf download \(resolvedDraftRef)")
+                    dflashModel = nil
+                }
+            } else {
+                dflashModel = nil
+            }
+        } else {
+            dflashModel = nil
         }
 
 
@@ -772,7 +873,9 @@ struct MLXServer: AsyncParsableCommand {
                 let bodyData = try await collectBody(request)
                 return try await handleChatCompletion(
                     request: request, bodyData: bodyData, config: config, container: container, semaphore: semaphore, stats: stats, promptCache: promptCache,
-                    draftModelRef: draftModelRef, numDraftTokens: numDraftTokensConfig
+                    draftModelRef: draftModelRef, numDraftTokens: numDraftTokensConfig,
+                    dflashModel: dflashModel, dflashBlockSize: dflashBlockSizeConfig,
+                    dflashTargetModel: dflashTargetModel
                 )
             } catch {
                 let errMsg = String(describing: error).replacingOccurrences(of: "\"", with: "'")
@@ -1055,7 +1158,7 @@ actor ServerStats {
     }
 }
 
-// ── Prompt Cache ─────────────────────────────────────────────────────────────
+
 
 actor PromptCache {
     struct CachedState {
@@ -1074,6 +1177,9 @@ actor PromptCache {
     /// If not materialized now, those lazy references point to the live cache tensors
     /// which get overwritten by subsequent requests, causing stale data / SIGTRAP on restore.
     func save(tokens: [Int], cache: [KVCache]) {
+        if cache.contains(where: { $0 is MambaCache }) {
+            return
+        }
         let states = cache.map { $0.state }
         let metaStates = cache.map { $0.metaState }
         // Materialize all lazy MLX arrays so they survive cache mutations
@@ -1088,6 +1194,14 @@ actor PromptCache {
     /// Restores matched KV state, trims any excess — mirrors llama-server behaviour.
     /// Returns the number of matched tokens, or nil on a complete miss.
     func restore(newTokens: [Int], into cache: [KVCache]) -> Int? {
+        // MambaCache/RNN states cannot be arbitrarily rolled back or safely saved
+        // after the fact without exact sequence-boundary synchronization.
+        // Disable prompt caching entirely for hybrid models (e.g. Qwen3Next).
+        if cache.contains(where: { $0 is MambaCache }) {
+            misses += 1
+            return nil
+        }
+
         guard let cached, !cached.tokens.isEmpty else {
             misses += 1
             return nil
@@ -1156,7 +1270,10 @@ func handleChatCompletion(
     stats: ServerStats,
     promptCache: PromptCache,
     draftModelRef: DraftModelRef? = nil,
-    numDraftTokens: Int = 4
+    numDraftTokens: Int = 4,
+    dflashModel: DFlashDraftModel? = nil,
+    dflashBlockSize: Int? = nil,
+    dflashTargetModel: (any DFlashTargetModel)? = nil
 ) async throws -> Response {
     let chatReq = try JSONDecoder().decode(ChatCompletionRequest.self, from: bodyData)
     let isStream = chatReq.stream ?? false
@@ -1319,7 +1436,69 @@ func handleChatCompletion(
     fflush(stdout)
     let prefillStart = Date()
 
-    // ── Cache-aware generation ──
+    // ── DFlash block-diffusion speculative decoding ──
+    // When --dflash is enabled and both DFlash draft model and target model conform
+    // to DFlashTargetModel, we use DFlashRuntime.generate instead of the standard path.
+    if let dflashDraft = dflashModel, let targetModel = dflashTargetModel {
+        print("[SwiftLM] ⚡ DFlash block-diffusion speculative decoding active")
+        print("[SwiftLM] Using speculative decoding: DFlash block-diffusion mode active")
+        fflush(stdout)
+        // Convert DFlashEvent stream to Generation stream with proper streaming detokenizer
+        let dflashTokenizer = await container.tokenizer
+        let dflashStream = DFlashRuntime.generate(
+            targetModel: targetModel,
+            draftModel: dflashDraft,
+            promptTokens: promptTokens,
+            maxNewTokens: tokenLimit,
+            blockTokens: dflashBlockSize
+        )
+
+        // Use a class wrapper so the detokenizer can be mutated inside the closure
+        final class DetokenizerBox: @unchecked Sendable {
+            var detokenizer: NaiveStreamingDetokenizer
+            init(_ d: NaiveStreamingDetokenizer) { self.detokenizer = d }
+        }
+        let box = DetokenizerBox(NaiveStreamingDetokenizer(tokenizer: dflashTokenizer))
+
+        let genStream = AsyncStream<Generation> { continuation in
+            Task {
+                for await event in dflashStream {
+                    switch event {
+                    case .token(let tokenID, _, _, _):
+                        box.detokenizer.append(token: tokenID)
+                        if let chunk = box.detokenizer.next() {
+                            continuation.yield(.chunk(chunk, tokenId: tokenID))
+                        }
+                    case .prefill, .prefillProgress:
+                        break
+                    case .summary(let summary):
+                        print("[SwiftLM] DFlash summary: \(summary.generationTokens) tokens, \(String(format: "%.1f", summary.tokensPerSecond)) tok/s, acceptance=\(String(format: "%.1f%%", summary.acceptanceRatio * 100)), \(summary.cyclesCompleted) cycles")
+                    }
+                }
+                continuation.finish()
+            }
+        }
+
+        let modelId = config.modelId
+        if isStream {
+            return handleChatStreaming(
+                stream: genStream, modelId: modelId, stopSequences: stopSequences,
+                includeUsage: includeUsage, promptTokenCount: promptTokenCount,
+                enableThinking: enableThinking, jsonMode: jsonMode, semaphore: semaphore,
+                stats: stats, genStart: genStart, prefillStart: prefillStart,
+                emitPrefillProgress: false, onPrefillDone: nil
+            )
+        } else {
+            return try await handleChatNonStreaming(
+                stream: genStream, modelId: modelId, stopSequences: stopSequences,
+                promptTokenCount: promptTokenCount, enableThinking: enableThinking,
+                jsonMode: jsonMode, semaphore: semaphore,
+                stats: stats, genStart: genStart, prefillStart: prefillStart, onPrefillDone: nil
+            )
+        }
+    }
+
+    // ── Cache-aware generation (standard path) ──
     let (stream, onPrefillDone) = try await container.perform { context -> (AsyncStream<Generation>, (() async -> Void)?) in
         let cache = context.model.newCache(parameters: params)
 
@@ -1362,13 +1541,6 @@ func handleChatCompletion(
             let trimmedInput = LMInput(tokens: remainingTokens)
             stream = try MLXLMCommon.generate(
                 input: trimmedInput, cache: cache, parameters: params, context: context
-            )
-        } else if let draftRef = draftModelRef {
-            // Speculative decoding path: draft model generates candidates, main model verifies
-            print("[SwiftLM] Using speculative decoding (\(numDraftTokens) draft tokens/round)")
-            stream = try MLXLMCommon.generate(
-                input: lmInput, cache: cache, parameters: params, context: context,
-                draftModel: draftRef.model, numDraftTokens: numDraftTokens
             )
         } else {
             // Cache miss: process the full prompt.
@@ -1648,8 +1820,10 @@ func handleChatStreaming(
                                             content: c.isEmpty ? nil : c, finishReason: nil))
                     }
                     cont.yield(sseChunk(modelId: modelId, reasoningContent: nil, content: nil, finishReason: "stop"))
+                    let genDur = Date().timeIntervalSince(genStart)
+                    let genTokPerSec = genDur > 0 ? Double(completionTokenCount) / genDur : 0
                     if includeUsage {
-                        cont.yield(sseUsageChunk(modelId: modelId, promptTokens: promptTokenCount, completionTokens: completionTokenCount))
+                        cont.yield(sseUsageChunk(modelId: modelId, promptTokens: promptTokenCount, completionTokens: completionTokenCount, tokPerSec: genTokPerSec, durationMs: genDur * 1000))
                     }
                     cont.yield("data: [DONE]\r\n\r\n")
                     cont.finish()
@@ -1689,8 +1863,10 @@ func handleChatStreaming(
                         reason = hasToolCalls ? "tool_calls" : "stop"
                     }
                     cont.yield(sseChunk(modelId: modelId, reasoningContent: nil, content: nil, finishReason: reason))
+                    let genDur = Date().timeIntervalSince(genStart)
+                    let genTokPerSec = genDur > 0 ? Double(completionTokenCount) / genDur : 0
                     if includeUsage {
-                        cont.yield(sseUsageChunk(modelId: modelId, promptTokens: promptTokenCount, completionTokens: completionTokenCount))
+                        cont.yield(sseUsageChunk(modelId: modelId, promptTokens: promptTokenCount, completionTokens: completionTokenCount, tokPerSec: genTokPerSec, durationMs: genDur * 1000))
                     }
                     cont.yield("data: [DONE]\r\n\r\n")
                     cont.finish()
@@ -1698,8 +1874,8 @@ func handleChatStreaming(
                     print("")  // end the real-time token stream line
                     let postMemSnap = MemoryUtils.snapshot()
                     print("srv  slot done: id 0 | gen_tokens=\(completionTokenCount) | OS_RAM=\(String(format: "%.1f", postMemSnap.os))GB | MEM_DEMAND=\(String(format: "%.1f", postMemSnap.demand))GB | GPU_MEM=\(String(format: "%.1f", postMemSnap.gpu))GB")
-                    let dur = Date().timeIntervalSince(genStart)
-                    let tokPerSec = dur > 0 ? Double(completionTokenCount) / dur : 0
+                    let dur = genDur
+                    let tokPerSec = genTokPerSec
                     let logContent: Any = hasToolCalls ? NSNull() : fullText
                     let logResp: [String: Any] = [
                         "choices": [[
@@ -1851,7 +2027,12 @@ func handleChatNonStreaming(
                 finishReason: hasToolCalls ? "tool_calls" : finishReason
             )
         ],
-        usage: TokenUsage(promptTokens: promptTokenCount, completionTokens: completionTokenCount, totalTokens: totalTokens)
+        usage: TokenUsage(promptTokens: promptTokenCount, completionTokens: completionTokenCount, totalTokens: totalTokens),
+        timings: ChatCompletionResponse.Timings(
+            predictedPerSecond: duration > 0 ? Double(completionTokenCount) / duration : 0,
+            predictedN: completionTokenCount,
+            predictedMs: duration * 1000
+        )
     )
     let encoded = try JSONEncoder().encode(resp)
     // llama-server style: log full response JSON on one line
@@ -2104,7 +2285,12 @@ func handleTextNonStreaming(
         choices: [
             TextChoice(index: 0, text: fullText, finishReason: finishReason)
         ],
-        usage: TokenUsage(promptTokens: promptTokenCount, completionTokens: completionTokenCount, totalTokens: totalTokens)
+        usage: TokenUsage(promptTokens: promptTokenCount, completionTokens: completionTokenCount, totalTokens: totalTokens),
+        timings: ChatCompletionResponse.Timings(
+            predictedPerSecond: duration > 0 ? Double(completionTokenCount) / duration : 0,
+            predictedN: completionTokenCount,
+            predictedMs: duration * 1000
+        )
     )
     let encoded = try JSONEncoder().encode(resp)
     return Response(
@@ -2313,18 +2499,26 @@ func ssePrefillChunk(nPast: Int = 0, promptTokens: Int, elapsedSeconds: Int) -> 
     return "event: prefill_progress\r\ndata: \(String(data: data, encoding: .utf8)!)\r\n\r\n"
 }
 
-func sseUsageChunk(modelId: String, promptTokens: Int, completionTokens: Int) -> String {
+func sseUsageChunk(modelId: String, promptTokens: Int, completionTokens: Int, tokPerSec: Double? = nil, durationMs: Double? = nil) -> String {
+    var usage: [String: Any] = [
+        "prompt_tokens": promptTokens,
+        "completion_tokens": completionTokens,
+        "total_tokens": promptTokens + completionTokens
+    ]
+    if let tokPerSec, let durationMs {
+        usage["timings"] = [
+            "predicted_per_second": tokPerSec,
+            "predicted_n": completionTokens,
+            "predicted_ms": durationMs
+        ]
+    }
     let chunk: [String: Any] = [
         "id": "chatcmpl-\(UUID().uuidString)",
         "object": "chat.completion.chunk",
         "created": Int(Date().timeIntervalSince1970),
         "model": modelId,
         "choices": [] as [[String: Any]],
-        "usage": [
-            "prompt_tokens": promptTokens,
-            "completion_tokens": completionTokens,
-            "total_tokens": promptTokens + completionTokens
-        ]
+        "usage": usage
     ]
     let data = try! JSONSerialization.data(withJSONObject: chunk)
     return "data: \(String(data: data, encoding: .utf8)!)\r\n\r\n"
@@ -2589,6 +2783,19 @@ struct ChatCompletionResponse: Encodable {
     let created: Int
     let choices: [Choice]
     let usage: TokenUsage
+    let timings: Timings?
+
+    struct Timings: Encodable {
+        let predictedPerSecond: Double
+        let predictedN: Int
+        let predictedMs: Double
+
+        enum CodingKeys: String, CodingKey {
+            case predictedPerSecond = "predicted_per_second"
+            case predictedN = "predicted_n"
+            case predictedMs = "predicted_ms"
+        }
+    }
 }
 
 struct Choice: Encodable {
@@ -2642,6 +2849,7 @@ struct TextCompletionResponse: Encodable {
     let created: Int
     let choices: [TextChoice]
     let usage: TokenUsage
+    let timings: ChatCompletionResponse.Timings?
 }
 
 struct TextChoice: Encodable {
