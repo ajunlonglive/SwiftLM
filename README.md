@@ -80,13 +80,12 @@ Benchmark results for full-RAM (no SSD streaming) MoE inference on M1 Ultra. The
 | Configuration | Short (~126 tok) | Medium (~400 tok) | Long (~800 tok) |
 |---|---|---|---|
 | **Vanilla full-GPU** | **61.7 tok/s** | **62.3 tok/s** | **62.1 tok/s** |
-| `--dflash` (block_size=16) † | 52.3 tok/s | **70.3 tok/s** (+13%) | **69.9 tok/s** (+13%) |
 
 > *Hardware:* Apple M1 Ultra, 64 GB unified memory, macOS 26.x. Model ~20 GB on disk, ~21.6 GB resident weight + ~2.1 GB KV at runtime.
 > *Flags:* `--repeat-penalty 1.1 --max-tokens 2000`, `temperature: 0.6`, single-stream `/v1/chat/completions`.
 > *Vanilla baseline before* `needsMoeFlush` *gate (for reference):* 19.2 / 18.1 / 18.3 tok/s — see #84.
 
-† DFlash uses [`z-lab/Qwen3.6-35B-A3B-DFlash`](https://huggingface.co/z-lab/Qwen3.6-35B-A3B-DFlash) (~948 MB) as the block-diffusion draft model. DFlash gives a clean +13% on medium/long generations but regresses short prompts (block overhead doesn't amortize at low token counts) and changes stop-condition behavior (`finish_reason=null` vs `stop`/`length`). Recommend a quality eval before using as default.
+> ⚠️ **DFlash on this model is currently unsuitable for production.** DFlash uses pure greedy (`argMax`) decoding regardless of `temperature`, which on Qwen3.6-35B-A3B + the [`z-lab/Qwen3.6-35B-A3B-DFlash`](https://huggingface.co/z-lab/Qwen3.6-35B-A3B-DFlash) draft locks into low-entropy attractors (`"and and and..."`, `"**UMA** **UMA**..."`). Earlier 70 tok/s DFlash numbers were degenerate output that scored high acceptance because draft and target both committed to the same locked-in token. Repetition-penalty mitigation works on some prompts but tanks acceptance on others — the proper fix is stochastic posterior sampling with rejection-based accept ([Leviathan/Chen](https://arxiv.org/abs/2211.17192) formulation), which is a DFlash architecture change tracked at [z-lab/dflash#91](https://github.com/z-lab/dflash/issues/91).
 
 ### DeepSeek-V4-Flash (126 GB, Q3-mixed-gs128-affine) — M5 Pro 64 GB
 
