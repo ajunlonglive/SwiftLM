@@ -329,7 +329,7 @@ public enum DFlashRuntime {
 
         let draftBackend = DFlashDraftBackend()
 
-        var targetCache = makeTargetCache(targetModel: targetModel)
+        let targetCache = makeTargetCache(targetModel: targetModel)
 
         let draftCache = draftBackend.makeCache(
             draftModel: draftModel,
