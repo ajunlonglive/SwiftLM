@@ -3,19 +3,19 @@ import MLX
 import MLXLMCommon
 @testable import SwiftLM
 
-// MARK: - Regression tests for PR #85 — prompt-cache bleed fixes
+// MARK: - Regression tests for PR #85 -- prompt-cache bleed fixes
 //
 // These tests protect the PromptCache actor's save/restore contract WITHOUT
 // downloading any model. We create synthetic KVCache instances with tiny
 // MLXArray tensors ([1, 2, T, 4]) and exercise every guard directly.
 //
 // What this locks in:
-//   1. MambaCache gate in save() and restore()       — PR #85 fix 1
-//   2. T-dim slice to P in save()                    — PR #85 fix 2
-//   3. ndim >= 3 guard in restore() minSeqLen scan   — PR #85 fix 3
-//   4. Recurrent-layer detection in restore()        — PR #85 fix 4
-//   5. Spec-decode-first ordering (logic test)       — PR #85 fix 5
-//   6. skipPromptCache guard (logic test)            — PR #85 fix 6
+//   1. MambaCache gate in save() and restore()       -- PR #85 fix 1
+//   2. T-dim slice to P in save()                    -- PR #85 fix 2
+//   3. ndim >= 3 guard in restore() minSeqLen scan   -- PR #85 fix 3
+//   4. Recurrent-layer detection in restore()        -- PR #85 fix 4
+//   5. Spec-decode-first ordering (logic test)       -- PR #85 fix 5
+//   6. skipPromptCache guard (logic test)            -- PR #85 fix 6
 
 final class PromptCacheTests: XCTestCase {
 
@@ -25,15 +25,6 @@ final class PromptCacheTests: XCTestCase {
     /// This mimics a layer that has processed T tokens.
     private func makePopulatedSimpleCache(seqLen T: Int) -> KVCacheSimple {
         let cache = KVCacheSimple()
-        let keys = MLXArray.ones([1, 2, T, 4], dtype: .float16)
-        let values = MLXArray.ones([1, 2, T, 4], dtype: .float16)
-        _ = cache.update(keys: keys, values: values)
-        return cache
-    }
-
-    /// Create a RotatingKVCache with pre-populated state.
-    private func makePopulatedRotatingCache(seqLen T: Int, maxSize: Int) -> RotatingKVCache {
-        let cache = RotatingKVCache(maxSize: maxSize)
         let keys = MLXArray.ones([1, 2, T, 4], dtype: .float16)
         let values = MLXArray.ones([1, 2, T, 4], dtype: .float16)
         _ = cache.update(keys: keys, values: values)
@@ -50,29 +41,35 @@ final class PromptCacheTests: XCTestCase {
 
         await pc.save(tokens: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], cache: [simpleLayer, mambaLayer])
 
-        // Attempting to restore should be a miss since nothing was saved
-        let freshCache = [KVCacheSimple(), MambaCache()] as [any KVCache]
+        // Restore into a non-Mamba cache so a miss validates save() skipped persistence,
+        // rather than restore() taking its own MambaCache early-exit.
+        let freshCache = [KVCacheSimple()] as [any KVCache]
         let result = await pc.restore(newTokens: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], into: freshCache)
-        XCTAssertNil(result, "MambaCache present → save must be no-op → restore must miss")
+        XCTAssertNil(result, "save() should be a no-op when any source layer is MambaCache")
     }
 
     /// PR #85 fix 2: save() must slice KVCacheSimple state T-dim to exactly P tokens.
-    /// KVCacheSimple pre-allocates T > P in its internal buffer.
+    /// KVCacheSimple internally pre-allocates buffers in step-sized chunks (step=256),
+    /// so the raw buffer T can exceed the actual prompt length P. The state getter
+    /// returns [..<offset] which is correct, but save() applies an additional T-dim
+    /// slice to guarantee cached.tokens.count === cached state's T.
     func testSave_SlicesTDimToP() async {
         let pc = PromptCache()
-        // Create cache with T=256+10 pre-allocated buffer for 10 tokens
         let cache = makePopulatedSimpleCache(seqLen: 10)
 
-        // The internal buffer is over-allocated (step=256), but state getter
-        // returns [..<offset] which is exactly 10. The T-dim slice in save()
-        // ensures the saved state matches P (10 tokens).
         let tokens = Array(0..<10)
         await pc.save(tokens: tokens, cache: [cache])
 
-        // Restore with exact same tokens → full match
+        // Restore with exact same tokens -> full match
         let freshCache = [KVCacheSimple()] as [any KVCache]
         let result = await pc.restore(newTokens: tokens, into: freshCache)
         XCTAssertEqual(result, 10, "Full match: all 10 tokens should be restored")
+
+        // Verify the restored cache's state has T-dim == P (10), not over-allocated
+        let restoredState = freshCache[0].state
+        XCTAssertFalse(restoredState.isEmpty, "Restored cache must have state")
+        XCTAssertEqual(restoredState[0].dim(2), 10,
+            "Restored keys T-dim must equal P (10), not the pre-allocated buffer size")
     }
 
     /// save() should work fine when T <= P (no slicing needed).
@@ -114,7 +111,7 @@ final class PromptCacheTests: XCTestCase {
         // Restore into a cache that includes MambaCache
         let restoreCache: [any KVCache] = [KVCacheSimple(), MambaCache()]
         let result = await pc.restore(newTokens: [1, 2, 3, 4, 5], into: restoreCache)
-        XCTAssertNil(result, "MambaCache in target cache → restore must return nil (miss)")
+        XCTAssertNil(result, "MambaCache in target cache -> restore must return nil (miss)")
 
         let stats = await pc.stats()
         XCTAssertEqual(stats.misses, 1)
@@ -132,10 +129,10 @@ final class PromptCacheTests: XCTestCase {
         let recurrentLayer = ArraysCache(size: 2)
         let restoreCache: [any KVCache] = [recurrentLayer]
         let result = await pc.restore(newTokens: [1, 2, 3, 4, 5], into: restoreCache)
-        XCTAssertNil(result, "Recurrent layer (ArraysCache) → restore must bail")
+        XCTAssertNil(result, "Recurrent layer (ArraysCache) -> restore must bail")
     }
 
-    /// Basic happy path: save and restore with identical tokens → full match.
+    /// Basic happy path: save and restore with identical tokens -> full match.
     func testRestore_FullMatch() async {
         let pc = PromptCache()
         let cache = makePopulatedSimpleCache(seqLen: 5)
@@ -144,7 +141,7 @@ final class PromptCacheTests: XCTestCase {
 
         let freshCache: [any KVCache] = [KVCacheSimple()]
         let result = await pc.restore(newTokens: tokens, into: freshCache)
-        XCTAssertEqual(result, 5, "Identical tokens → full match")
+        XCTAssertEqual(result, 5, "Identical tokens -> full match")
 
         let stats = await pc.stats()
         XCTAssertEqual(stats.hits, 1)
@@ -158,7 +155,7 @@ final class PromptCacheTests: XCTestCase {
 
         let freshCache: [any KVCache] = [KVCacheSimple()]
         let result = await pc.restore(newTokens: [1, 2, 3, 99, 100], into: freshCache)
-        XCTAssertEqual(result, 3, "First 3 tokens match → partial hit returns 3")
+        XCTAssertEqual(result, 3, "First 3 tokens match -> partial hit returns 3")
     }
 
     /// Complete miss: no token overlap.
@@ -169,56 +166,42 @@ final class PromptCacheTests: XCTestCase {
 
         let freshCache: [any KVCache] = [KVCacheSimple()]
         let result = await pc.restore(newTokens: [99, 98, 97], into: freshCache)
-        XCTAssertNil(result, "No token overlap → miss")
+        XCTAssertNil(result, "No token overlap -> miss")
     }
 
-    /// Empty cache → restore must miss gracefully.
+    /// Empty cache -> restore must miss gracefully.
     func testRestore_EmptyCache_Misses() async {
         let pc = PromptCache()
         let freshCache: [any KVCache] = [KVCacheSimple()]
         let result = await pc.restore(newTokens: [1, 2, 3], into: freshCache)
-        XCTAssertNil(result, "No prior save → restore must return nil")
+        XCTAssertNil(result, "No prior save -> restore must return nil")
     }
 
-    /// Sliding window safety: if trim excess >= minCachedSeqLen, bail.
-    /// This protects against zeroing out a RotatingKVCache layer.
+    /// This protects against zeroing out a cached layer by trimming away all tokens.
     func testRestore_ExcessExceedsMinSeqLen_Bails() async {
+        // Control case: a safe trim should still succeed.
         let pc = PromptCache()
-        // Save a 20-token sequence from a single KVCacheSimple layer.
-        let cache = makePopulatedSimpleCache(seqLen: 20)
-        let tokens = Array(0..<20)
-        await pc.save(tokens: tokens, cache: [cache])
-
-        // Now try to restore with only a 2-token prefix match: [0, 1, 99, ...]
-        // This means matchLen=2, excess = 20 - 2 = 18.
-        // The saved state has dim(2)=20, so minCachedSeqLen=20.
-        // excess(18) < minCachedSeqLen(20), so it WON'T bail — it's safe to trim 18.
-        // That's actually the correct behavior: trim(18) leaves 2 tokens, which is valid.
-        //
-        // To trigger the bail, we need excess >= minCachedSeqLen.
-        // Save a short sequence, then restore with a 1-token overlap and verify the
-        // trim would zero out the cache.
-        let pc2 = PromptCache()
         let shortCache = makePopulatedSimpleCache(seqLen: 3)
-        await pc2.save(tokens: [10, 20, 30], cache: [shortCache])
+        await pc.save(tokens: [10, 20, 30], cache: [shortCache])
 
-        // Request [10, 99, 99, 99] → matchLen=1, excess = 3 - 1 = 2.
-        // Saved state has dim(2)=3. excess(2) < minCachedSeqLen(3) → safe, should work.
-        // This is correct: trimming 2 from 3 leaves 1 token.
+        // Request [10, 99, 99, 99] -> matchLen=1, excess = 3 - 1 = 2.
+        // Saved state has dim(2)=3. excess(2) < minCachedSeqLen(3) -> safe.
         let fresh: [any KVCache] = [KVCacheSimple()]
-        let result = await pc2.restore(newTokens: [10, 99, 99, 99], into: fresh)
-        XCTAssertEqual(result, 1, "1-token prefix match with 3-token cache → should succeed (trim 2 from 3 is safe)")
+        let safeResult = await pc.restore(newTokens: [10, 99, 99, 99], into: fresh)
+        XCTAssertEqual(safeResult, 1, "1-token prefix match with 3-token cache should succeed because trimming 2 from 3 leaves 1 token")
 
-        // Now test the actual bail case: excess == minCachedSeqLen (would zero out).
-        let pc3 = PromptCache()
+        // Actual bail case: no shared prefix -> matchLen=0 -> guard matchLen > 0 fails -> nil.
+        // This exercises the zero-match guard which is the first line of defense.
+        let pc2 = PromptCache()
         let tinyCache = makePopulatedSimpleCache(seqLen: 2)
-        await pc3.save(tokens: [10, 20], cache: [tinyCache])
+        await pc2.save(tokens: [10, 20], cache: [tinyCache])
 
-        // Request [10, 99] → matchLen=1, excess = 2 - 1 = 1.
-        // Saved state has dim(2)=2. excess(1) < minCachedSeqLen(2) → safe.
         let fresh2: [any KVCache] = [KVCacheSimple()]
-        let result2 = await pc3.restore(newTokens: [10, 99], into: fresh2)
-        XCTAssertEqual(result2, 1, "1-token match from 2-token cache → trim 1 from 2 is safe")
+        let bailResult = await pc2.restore(newTokens: [99, 98], into: fresh2)
+        XCTAssertNil(bailResult, "No shared prefix with a 2-token cache must return nil")
+
+        let stats = await pc2.stats()
+        XCTAssertEqual(stats.misses, 1, "Zero-match bail must increment miss counter")
     }
 
     // MARK: - Group 3: Decision branch ordering (pure logic tests)
@@ -228,7 +211,7 @@ final class PromptCacheTests: XCTestCase {
         let isMultimodalRequest = true
         let kvBits: Int? = nil
         let skipPromptCache = isMultimodalRequest || kvBits != nil
-        XCTAssertTrue(skipPromptCache, "Multimodal request → must skip prompt cache")
+        XCTAssertTrue(skipPromptCache, "Multimodal request -> must skip prompt cache")
     }
 
     /// PR #85 fix 6: skipPromptCache must be true when kv_bits is set.
@@ -236,15 +219,15 @@ final class PromptCacheTests: XCTestCase {
         let isMultimodalRequest = false
         let kvBits: Int? = 4
         let skipPromptCache = isMultimodalRequest || kvBits != nil
-        XCTAssertTrue(skipPromptCache, "kv_bits set → must skip prompt cache (format mismatch)")
+        XCTAssertTrue(skipPromptCache, "kv_bits set -> must skip prompt cache (format mismatch)")
     }
 
-    /// Neither multimodal nor kv_bits → should NOT skip.
+    /// Neither multimodal nor kv_bits -> should NOT skip.
     func testSkipPromptCache_Standard_DoesNotSkip() {
         let isMultimodalRequest = false
         let kvBits: Int? = nil
         let skipPromptCache = isMultimodalRequest || kvBits != nil
-        XCTAssertFalse(skipPromptCache, "Standard text request → should attempt cache")
+        XCTAssertFalse(skipPromptCache, "Standard text request -> should attempt cache")
     }
 
     /// PR #85 fix 5: spec-decode must be checked BEFORE prompt cache.
@@ -266,7 +249,7 @@ final class PromptCacheTests: XCTestCase {
         }
 
         XCTAssertEqual(path, "spec-decode",
-            "Spec-decode must win over cache hit — partial cache restore corrupts draft KV state")
+            "Spec-decode must win over cache hit -- partial cache restore corrupts draft KV state")
     }
 
     /// Without draft model, cache hit should be used.
@@ -305,7 +288,7 @@ final class PromptCacheTests: XCTestCase {
         let fresh2: [any KVCache] = [KVCacheSimple()]
         _ = await pc.restore(newTokens: [1, 2, 3], into: fresh2)
 
-        // Miss (empty new tokens — still starts with matching prefix but let's do no overlap)
+        // Miss (no overlap)
         let fresh3: [any KVCache] = [KVCacheSimple()]
         _ = await pc.restore(newTokens: [77, 88], into: fresh3)
 
